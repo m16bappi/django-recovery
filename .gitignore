@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Django test project
+db.sqlite3
+test_db.sqlite3
+media/
+
+# MkDocs build output
+site/
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

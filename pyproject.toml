@@ -1,0 +1,57 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "django-recovery"
+version = "0.1.0"
+description = "Encrypted, deduplicated Django database and media backups, powered by restic"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "BSD-2-Clause" }
+authors = [{ name = "Mehedi Hasan Bappi", email = "mehedibubt34@gmail.com" }]
+keywords = ["django", "backup", "restore", "restic", "database", "s3", "gcs", "azure"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Web Environment",
+    "Framework :: Django",
+    "Framework :: Django :: 4.2",
+    "Framework :: Django :: 5.0",
+    "Framework :: Django :: 5.1",
+    "Framework :: Django :: 5.2",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: BSD License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: System :: Archiving :: Backup",
+]
+dependencies = ["django>=4.2"]
+
+[project.urls]
+Homepage = "https://github.com/m16bappi/django-recovery"
+Documentation = "https://m16bappi.github.io/django-recovery/"
+Repository = "https://github.com/m16bappi/django-recovery"
+Issues = "https://github.com/m16bappi/django-recovery/issues"
+Changelog = "https://github.com/m16bappi/django-recovery/releases"
+
+[project.optional-dependencies]
+test = ["pytest", "pytest-django"]
+docs = ["mkdocs-material"]
+
+[tool.setuptools.packages.find]
+include = ["django_recovery*"]
+
+[tool.setuptools.package-data]
+django_recovery = ["templates/**/*"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+extend-exclude = ["tests/testproject/**", "**/migrations/**"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]

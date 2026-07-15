@@ -1,0 +1,45 @@
+name: Release
+
+# Builds the pure-python django-recovery wheel + sdist on every v* tag and
+# publishes to PyPI via Trusted Publishing (OIDC - no API tokens).
+# restic itself is a system prerequisite and is not bundled (see README).
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: django-recovery sdist + wheel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install build
+      - name: Build django-recovery
+        run: python -m build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: recovery-dist
+          path: dist/*
+
+  publish:
+    name: Publish to PyPI
+    needs: build
+    # Publish only on tag pushes, never on manual dispatch builds.
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/django-recovery
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: recovery-dist
+          path: dist
+      - uses: pypa/gh-action-pypi-publish@release/v1

@@ -1,0 +1,72 @@
+site_name: django-recovery
+site_description: >-
+  Encrypted, deduplicated Django database and media backups, powered by restic.
+site_url: https://m16bappi.github.io/django-recovery/
+repo_url: https://github.com/m16bappi/django-recovery
+repo_name: m16bappi/django-recovery
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: teal
+      accent: teal
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: teal
+      accent: teal
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - content.code.copy
+    - content.action.edit
+    - search.suggest
+    - search.highlight
+
+nav:
+  - Why django-recovery: index.md
+  - Getting started:
+      - Installation: installation.md
+      - Quickstart: quickstart.md
+  - Configuration:
+      - Settings reference: configuration.md
+      - Storage backends: backends.md
+  - Usage:
+      - Management commands: commands.md
+      - Web dashboard: web-ui.md
+  - Reference:
+      - How it works: how-it-works.md
+      - Supported databases: databases.md
+      - FAQ: faq.md
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+  - pymdownx.details
+  - pymdownx.tabbed:
+      alternate_style: true
+
+plugins:
+  - search
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/m16bappi/django-recovery
+    - icon: fontawesome/brands/python
+      link: https://pypi.org/project/django-recovery/
