@@ -4,6 +4,34 @@ All notable changes to django-recovery are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [0.2.0] - 2026-07-16
+
+### Changed
+
+- **Breaking:** the repository password moved out of `OPTIONS` to the
+  top-level `RECOVERY['PASSWORD']` / `RECOVERY['PASSWORD_FILE']` keys.
+  `password` / `password_file` inside `OPTIONS` now raise
+  `ImproperlyConfigured` — `OPTIONS` carries backend connection details only.
+
+  ```python
+  # before                                  # after
+  "OPTIONS": {"path": "...",                "OPTIONS": {"path": "..."},
+              "password": "..."}            "PASSWORD": "..."
+  ```
+
+- Both password keys are optional: with neither set, restic reads
+  `RESTIC_PASSWORD` / `RESTIC_PASSWORD_FILE` from the process environment.
+- `location` is accepted only by the backends that honour it (S3, GCS,
+  Azure); passing it elsewhere now raises `ImproperlyConfigured`.
+- `BaseBackend` is abstract: subclasses must implement
+  `get_default_options()`; the `credential_env()` hook merged into `env()`.
+
+### Added
+
+- `django_recovery.types` — `RecoverySettings`, `RetentionOptions`, and
+  `TuningOptions` TypedDicts. Annotate `RECOVERY` for IDE autocomplete and
+  static key checking; runtime validation derives from the same annotations.
+
 ## [0.1.2] - 2026-07-16
 
 ### Changed
@@ -47,6 +75,7 @@ All notable changes to django-recovery are documented here. The format follows
   `remove`.
 - Staff web UI with background jobs and live logs.
 
+[0.2.0]: https://github.com/m16bappi/django-recovery/releases/tag/v0.2.0
 [0.1.2]: https://github.com/m16bappi/django-recovery/releases/tag/v0.1.2
 [0.1.1]: https://github.com/m16bappi/django-recovery/releases/tag/v0.1.1
 [0.1.0]: https://github.com/m16bappi/django-recovery/releases/tag/v0.1.0
