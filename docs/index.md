@@ -1,9 +1,3 @@
----
-hide:
-  - navigation
-  - toc
----
-
 # Why django-recovery
 
 **django-recovery** turns your Django `DATABASES` (and optionally your media directory)
