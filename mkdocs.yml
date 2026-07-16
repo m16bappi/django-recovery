@@ -33,7 +33,6 @@ theme:
     - search.highlight
 
 nav:
-  - Why django-recovery: index.md
   - Getting started:
       - Installation: installation.md
       - Quickstart: quickstart.md

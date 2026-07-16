@@ -63,7 +63,8 @@ def test_sqlite_backup_restore_roundtrip(tmp_path, monkeypatch):
     db_path = tmp_path / "app.sqlite3"
 
     config = RecoveryConfig(
-        backend=LocalBackend(path=str(repo), password="test-pass"),
+        backend=LocalBackend(path=str(repo)),
+        password="test-pass",
         databases=["default"],
         media=False,
         tags=["itest"],

@@ -1,9 +1,12 @@
 # Storage backends
 
 Pick the class matching where the repository lives. Each accepts the
-[common options](configuration.md#common-backend-options) (`password`/`password_file`,
-`location` where noted) plus its own. Unknown or missing options raise
-`ImproperlyConfigured` with the valid option list.
+[common options](configuration.md#common-backend-options) (`location` where noted)
+plus its own. Unknown or missing options raise `ImproperlyConfigured` with the
+valid option list.
+
+Examples below show `OPTIONS` only. The repository password is configured
+separately — see [Repository password](configuration.md#repository-password).
 
 ## Local directory
 
@@ -12,7 +15,6 @@ RECOVERY = {
     "BACKEND": "django_recovery.backends.LocalBackend",
     "OPTIONS": {
         "path": "/var/backups/myapp-restic",
-        "password": os.environ["RESTIC_PASSWORD"],
     },
 }
 ```
@@ -32,7 +34,6 @@ RECOVERY = {
         "access_key": os.environ["AWS_KEY_ID"],
         "secret_key": os.environ["AWS_SECRET"],
         "region_name": "eu-central-1",
-        "password": os.environ["RESTIC_PASSWORD"],
     },
 }
 ```
@@ -66,7 +67,6 @@ RECOVERY = {
         "location": "prod",
         "project_id": "my-project-123456",
         "credentials_file": "/etc/secrets/gcs-key.json",
-        "password": os.environ["RESTIC_PASSWORD"],
     },
 }
 ```
@@ -91,7 +91,6 @@ RECOVERY = {
         "location": "prod",
         "account_name": "myaccount",
         "account_key": os.environ["AZURE_KEY"],
-        "password": os.environ["RESTIC_PASSWORD"],
     },
 }
 ```
@@ -117,7 +116,6 @@ RECOVERY = {
         "host": "backup.example.com",
         "user": "deploy",
         "path": "/srv/restic/myapp",
-        "password": os.environ["RESTIC_PASSWORD"],   # repository password, not SSH
     },
 }
 ```
@@ -140,7 +138,6 @@ RECOVERY = {
     "OPTIONS": {
         "repository": "rclone:mydropbox:backups/myapp",
         "extra_env": {"RCLONE_CONFIG": "/etc/rclone.conf"},
-        "password": os.environ["RESTIC_PASSWORD"],
     },
 }
 ```

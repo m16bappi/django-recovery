@@ -16,7 +16,7 @@ class S3Backend(BaseBackend):
 
     def get_default_options(self) -> dict:
         return {
-            **super().get_default_options(),
+            "location": "",
             "bucket_name": None,
             "access_key": None,
             "secret_key": None,
@@ -33,9 +33,11 @@ class S3Backend(BaseBackend):
     def repository(self) -> str:
         endpoint = self.endpoint_url or DEFAULT_ENDPOINT
         endpoint = endpoint.removeprefix("https://").removeprefix("http://").rstrip("/")
-        return self._prefixed(f"s3:{endpoint}/{self.bucket_name}")
+        repo = f"s3:{endpoint}/{self.bucket_name}"
+        location = (self.location or "").strip("/")
+        return f"{repo}/{location}" if location else repo
 
-    def credential_env(self) -> dict[str, str]:
+    def env(self) -> dict[str, str]:
         env = {
             "AWS_ACCESS_KEY_ID": self.access_key,
             "AWS_SECRET_ACCESS_KEY": self.secret_key,

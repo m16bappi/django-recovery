@@ -9,10 +9,7 @@ class LocalBackend(BaseBackend):
     """Repository in a local directory: ``RECOVERY['OPTIONS']['path']``."""
 
     def get_default_options(self) -> dict:
-        return {
-            **super().get_default_options(),
-            "path": None,
-        }
+        return {"path": None}
 
     def _validate(self) -> None:
         super()._validate()

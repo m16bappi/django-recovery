@@ -14,8 +14,8 @@ RECOVERY = {
     "BACKEND": "django_recovery.backends.LocalBackend",
     "OPTIONS": {
         "path": "/var/backups/myapp-restic",
-        "password": os.environ["RESTIC_PASSWORD"],
     },
+    "PASSWORD": os.environ["RESTIC_PASSWORD"],
     "DATABASES": ["default"],   # DATABASES aliases to back up
     "MEDIA": False,             # also back up settings.MEDIA_ROOT
     "TAGS": ["prod"],           # extra tags added to every snapshot

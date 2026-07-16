@@ -1,3 +1,9 @@
+---
+hide:
+  - navigation
+  - toc
+---
+
 # Why django-recovery
 
 **django-recovery** turns your Django `DATABASES` (and optionally your media directory)
@@ -5,23 +11,8 @@ into [restic](https://restic.net/) snapshots: always encrypted, deduplicated acr
 backups, and restorable through a management command or a superuser-only web dashboard.
 
 You configure it like any Django storage — a backend class plus options in
-`settings.py` — and get production-grade backups without writing a single shell script:
-
-```python
-RECOVERY = {
-    "BACKEND": "django_recovery.backends.S3Backend",
-    "OPTIONS": {
-        "bucket_name": "myapp-backups",
-        "access_key": os.environ["AWS_KEY_ID"],
-        "secret_key": os.environ["AWS_SECRET"],
-        "password": os.environ["RESTIC_PASSWORD"],
-    },
-}
-```
-
-```bash
-python manage.py recovery backup
-```
+`settings.py` — and get production-grade backups without writing a single shell script.
+Setup lives in [Quickstart](quickstart.md); this page is the *why*.
 
 ## The problem with the usual approach
 
@@ -41,8 +32,10 @@ django-recovery delegates the hard parts to restic, a mature open-source backup 
 and focuses on the Django side (dump commands built from `settings.DATABASES`,
 management commands, the dashboard).
 
-**Encryption is always on.** Every snapshot is encrypted (AES-256, authenticated) with
-your repository password. There is no plaintext mode to forget to turn off.
+**Encryption is always on.** Every snapshot is encrypted client-side (AES-256 in
+counter mode, authenticated with Poly1305-AES) before a single byte leaves your server —
+including **metadata**: file names and structure are as unreadable as the data. There is
+no plaintext mode to forget to turn off, and the storage provider never sees anything.
 
 **Atomic failure semantics.** Backups stream through
 `restic backup --stdin-from-command`: if the database dump exits non-zero, **no snapshot
@@ -53,6 +46,34 @@ once. Tomorrow's backup only stores what changed since today's.
 
 **Any storage.** Local disk, S3 and every S3-compatible service, Google Cloud Storage,
 Azure Blob, SFTP — plus anything else through rclone.
+
+**Verifiable.** The repository is a documented, open format; `restic check` audits it,
+and any snapshot can be mounted or dumped with plain restic — your backups are never
+locked inside this library.
+
+## How it compares
+
+| | cron + `pg_dump \| gzip` | django-dbbackup | django-recovery |
+|---|---|---|---|
+| Encryption | DIY | Optional, via GPG (gpg binary + key trust setup) | Always on, client-side, zero setup |
+| Failed dump | Fragment still uploads | Depends on your wiring | No snapshot — atomic by design |
+| Storage cost | Full copy every run | Full copy every run | Delta only (dedup + zstd) |
+| Retention | Another script | Keep-last-N count | Policy: `daily/weekly/monthly/yearly/within`, per series |
+| Restore safety | Hope | Manual care | Tag guard refuses the wrong database; typed confirmation |
+| Web UI | — | — | Superuser dashboard, live job logs |
+
+django-dbbackup is a solid, popular package — if plain dumps in your existing
+`django-storages` bucket are all you need, it may be enough. django-recovery exists for
+when you want encryption, dedup, retention, and guarded restores to be **defaults you
+cannot forget**, not options you must assemble.
+
+## What django-recovery is not
+
+Honesty section. It is **not point-in-time recovery**: snapshots capture the moment the
+dump ran, not every transaction between dumps (dedup makes hourly backups affordable,
+which narrows the window — but for true PITR on a high-write PostgreSQL, reach for
+WAL archiving tools like pgBackRest or WAL-G). It also does not manage restic for you
+beyond what it needs: the binary is a system prerequisite, not a bundled dependency.
 
 ## Cheaper bandwidth, cheaper storage
 

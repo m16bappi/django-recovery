@@ -16,7 +16,7 @@ class GCSBackend(BaseBackend):
 
     def get_default_options(self) -> dict:
         return {
-            **super().get_default_options(),
+            "location": "",
             "bucket_name": None,
             "project_id": None,
             "credentials_file": None,
@@ -31,7 +31,7 @@ class GCSBackend(BaseBackend):
         location = (self.location or "").strip("/")
         return f"gs:{self.bucket_name}:/{location}"
 
-    def credential_env(self) -> dict[str, str]:
+    def env(self) -> dict[str, str]:
         env = {}
         if self.project_id:
             env["GOOGLE_PROJECT_ID"] = self.project_id

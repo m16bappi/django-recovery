@@ -15,7 +15,8 @@ from django_recovery.conf import (
 def _local(**overrides):
     raw = {
         "BACKEND": "django_recovery.backends.LocalBackend",
-        "OPTIONS": {"path": "/tmp/test-repo", "password": "test-password"},
+        "OPTIONS": {"path": "/tmp/test-repo"},
+        "PASSWORD": "test-password",
     }
     raw.update(overrides)
     return raw
@@ -26,7 +27,9 @@ def test_get_config_defaults_filled():
     assert isinstance(config, RecoveryConfig)
     assert isinstance(config.backend, LocalBackend)
     assert config.backend.repository == "/tmp/test-repo"
-    assert config.backend.env() == {"RESTIC_PASSWORD": "test-password"}
+    assert config.backend.env() == {}
+    assert config.restic_env() == {"RESTIC_PASSWORD": "test-password"}
+    assert config.password == "test-password"
     assert config.databases == ["default"]
     assert config.media is False
     assert config.tags == ["test"]
@@ -86,6 +89,41 @@ def test_operational_keys_parsed():
     assert config.media is True
     assert config.tags == ["prod"]
     assert config.binary == "/opt/restic"
+
+
+# --- PASSWORD / PASSWORD_FILE ------------------------------------------------
+
+def test_password_file_top_level_parsed():
+    raw = _local()
+    del raw["PASSWORD"]
+    raw["PASSWORD_FILE"] = "/run/secrets/restic"
+    with override_settings(RECOVERY=raw):
+        config = get_config()
+    assert config.restic_env() == {"RESTIC_PASSWORD_FILE": "/run/secrets/restic"}
+
+
+def test_password_and_password_file_both_raise():
+    with override_settings(RECOVERY=_local(PASSWORD_FILE="/f")):
+        with pytest.raises(ImproperlyConfigured, match="not both"):
+            get_config()
+
+
+def test_no_password_keys_accepted_env_is_users_concern():
+    raw = _local()
+    del raw["PASSWORD"]
+    with override_settings(RECOVERY=raw):
+        config = get_config()
+    # No password key in the overlay: restic reads RESTIC_PASSWORD /
+    # RESTIC_PASSWORD_FILE from the inherited process environment.
+    assert config.restic_env() == {}
+
+
+def test_password_in_options_rejected():
+    raw = _local()
+    raw["OPTIONS"] = {"path": "/tmp/test-repo", "password": "pw"}
+    with override_settings(RECOVERY=raw):
+        with pytest.raises(ImproperlyConfigured, match="Invalid option 'password'"):
+            get_config()
 
 
 # --- RETENTION / TUNING validation -----------------------------------------
@@ -160,7 +198,7 @@ def test_build_global_args_empty_by_default():
 
 def test_build_global_args_full_tuning():
     config = RecoveryConfig(
-        backend=LocalBackend(path="/repo", password="x"),
+        backend=LocalBackend(path="/repo"),
         databases=["default"],
         tuning={
             "compression": "max",
@@ -185,9 +223,7 @@ def test_build_global_args_full_tuning():
 
 def test_build_global_args_connections_scoped_to_scheme():
     config = RecoveryConfig(
-        backend=S3Backend(
-            bucket_name="b", access_key="a", secret_key="s", password="x"
-        ),
+        backend=S3Backend(bucket_name="b", access_key="a", secret_key="s"),
         databases=["default"],
         tuning={"connections": 8},
     )
@@ -196,7 +232,7 @@ def test_build_global_args_connections_scoped_to_scheme():
 
 def test_build_global_args_connections_skipped_for_local_path():
     config = RecoveryConfig(
-        backend=LocalBackend(path="C:\\backups\\repo", password="x"),
+        backend=LocalBackend(path="C:\\backups\\repo"),
         databases=["default"],
         tuning={"connections": 8},
     )
@@ -206,7 +242,7 @@ def test_build_global_args_connections_skipped_for_local_path():
 
 def _config(binary=None):
     return RecoveryConfig(
-        backend=LocalBackend(path="/repo", password="x"),
+        backend=LocalBackend(path="/repo"),
         databases=["default"],
         binary=binary,
     )

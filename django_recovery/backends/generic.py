@@ -19,7 +19,6 @@ class GenericBackend(BaseBackend):
 
     def get_default_options(self) -> dict:
         return {
-            **super().get_default_options(),
             "repository": None,
             "extra_env": None,
         }
@@ -28,5 +27,5 @@ class GenericBackend(BaseBackend):
         super()._validate()
         self._require("repository")
 
-    def credential_env(self) -> dict[str, str]:
+    def env(self) -> dict[str, str]:
         return dict(self.extra_env or {})

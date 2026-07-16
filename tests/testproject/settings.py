@@ -60,8 +60,8 @@ RECOVERY = {
     "BACKEND": "django_recovery.backends.LocalBackend",
     "OPTIONS": {
         "path": "/tmp/test-repo",
-        "password": "test-password",
     },
+    "PASSWORD": "test-password",
     "DATABASES": ["default"],
     "MEDIA": False,
     "TAGS": ["test"],

@@ -27,7 +27,8 @@ from django_recovery.restic import Snapshot
 
 RECOVERY_WITH_RETENTION = {
     "BACKEND": "django_recovery.backends.LocalBackend",
-    "OPTIONS": {"path": "/tmp/test-repo", "password": "test-password"},
+    "OPTIONS": {"path": "/tmp/test-repo"},
+    "PASSWORD": "test-password",
     "RETENTION": {"daily": 7, "weekly": 4},
 }
 

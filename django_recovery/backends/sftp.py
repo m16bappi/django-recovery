@@ -16,7 +16,6 @@ class SFTPBackend(BaseBackend):
 
     def get_default_options(self) -> dict:
         return {
-            **super().get_default_options(),
             "host": None,
             "path": None,
             "user": None,

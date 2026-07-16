@@ -15,7 +15,7 @@ class AzureBackend(BaseBackend):
 
     def get_default_options(self) -> dict:
         return {
-            **super().get_default_options(),
+            "location": "",
             "container": None,
             "account_name": None,
             "account_key": None,
@@ -36,7 +36,7 @@ class AzureBackend(BaseBackend):
         location = (self.location or "").strip("/")
         return f"azure:{self.container}:/{location}"
 
-    def credential_env(self) -> dict[str, str]:
+    def env(self) -> dict[str, str]:
         env = {"AZURE_ACCOUNT_NAME": self.account_name}
         if self.account_key:
             env["AZURE_ACCOUNT_KEY"] = self.account_key

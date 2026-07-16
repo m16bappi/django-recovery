@@ -40,9 +40,10 @@ snapshots are tagged `media`. Tags drive `latest` resolution and the restore gua
 
 ## Credentials flow
 
-The configured [storage backend](backends.md) builds the restic subprocess environment
-from `OPTIONS`: repository password (`RESTIC_PASSWORD` / `RESTIC_PASSWORD_FILE`) and
-cloud credentials (`AWS_*`, `GOOGLE_*`, `AZURE_*`). Backend values override anything
+The configured [storage backend](backends.md) builds cloud credentials (`AWS_*`,
+`GOOGLE_*`, `AZURE_*`) from `OPTIONS`; the repository password comes from the
+top-level `RECOVERY['PASSWORD']` / `'PASSWORD_FILE'` keys (`RESTIC_PASSWORD` /
+`RESTIC_PASSWORD_FILE`). Configured values override anything
 inherited from the shell, so behavior is deterministic regardless of the caller's
 environment. Nothing secret ever enters argv.
 

@@ -21,7 +21,8 @@ from django_recovery.restic import Snapshot
 
 def _config(*, databases=("default",), media=False, tags=("test",), **extra):
     return RecoveryConfig(
-        backend=LocalBackend(path="/repo", password="test-password"),
+        backend=LocalBackend(path="/repo"),
+        password="test-password",
         databases=list(databases),
         media=media,
         tags=list(tags),

@@ -86,8 +86,8 @@ RECOVERY = {
     "BACKEND": "django_recovery.backends.LocalBackend",
     "OPTIONS": {
         "path": "/var/backups/myapp-restic",
-        "password": os.environ["RESTIC_PASSWORD"],  # repository password
     },
+    "PASSWORD": os.environ["RESTIC_PASSWORD"],
     "DATABASES": ["default"],   # DATABASES aliases to back up
     "MEDIA": False,             # also back up settings.MEDIA_ROOT
     "TAGS": ["prod"],           # extra tags added to every snapshot
@@ -124,7 +124,9 @@ configured through the UI.
 | Key         | Type        | Default       | Meaning |
 |-------------|-------------|---------------|---------|
 | `BACKEND`   | `str`       | *(required)*  | Dotted path to a storage backend class (see [Storage backends](#storage-backends)). |
-| `OPTIONS`   | `dict`      | `{}`          | Keyword arguments for the backend class: repository location, credentials, and the repository `password` / `password_file`. |
+| `OPTIONS`   | `dict`      | `{}`          | Keyword arguments for the backend class: repository location and storage credentials only. |
+| `PASSWORD`  | `str`       | `None`        | Repository password. Provide this **or** `PASSWORD_FILE`; with neither, restic reads `RESTIC_PASSWORD` from the environment. |
+| `PASSWORD_FILE` | `str`   | `None`        | Path to a file containing the repository password (restic's `RESTIC_PASSWORD_FILE`). |
 | `DATABASES` | `list[str]` | `["default"]` | `DATABASES` aliases to back up. Each produces one snapshot tagged `db:<alias>`. |
 | `MEDIA`     | `bool`      | `False`       | When `True`, also back up `settings.MEDIA_ROOT` as a snapshot tagged `media`. |
 | `TAGS`      | `list[str]` | `[]`          | Extra tags appended to every snapshot (in addition to `db:<alias>` / `media`). |
@@ -136,9 +138,9 @@ configured through the UI.
 | `MEDIA_EXCLUDE` | `list[str]` | `[]`      | `--exclude` patterns for the media snapshot. |
 | `EXTRA_ARGS` | `list[str]` | `[]`         | Raw arguments appended to every restic invocation (escape hatch). |
 
-Every backend accepts `password` (the repository password as a string) **or**
-`password_file` (a path, mapped to restic's `RESTIC_PASSWORD_FILE`) — exactly one is
-required. Unknown options, unknown top-level keys, and missing required options raise
+The repository password lives in the top-level `PASSWORD` / `PASSWORD_FILE` keys —
+`OPTIONS` holds connection details only. Unknown options, unknown top-level keys, and
+missing required options raise
 `ImproperlyConfigured` at first use. Credentials are passed to the restic subprocess via
 its environment only — never on the command line, never in logs or exception text.
 
@@ -147,14 +149,15 @@ its environment only — never on the command line, never in logs or exception t
 ## Storage backends
 
 Pick the class matching where the repository lives; each accepts the common options
-(`password`/`password_file`, and `location` as a prefix where noted) plus its own.
+(`location` as a prefix where noted) plus its own; the repository password is the
+top-level `PASSWORD` / `PASSWORD_FILE` key.
 
 ### Local directory
 
 ```python
 RECOVERY = {
     "BACKEND": "django_recovery.backends.LocalBackend",
-    "OPTIONS": {"path": "/var/backups/myapp-restic", "password": os.environ["RESTIC_PASSWORD"]},
+    "OPTIONS": {"path": "/var/backups/myapp-restic"},
 }
 ```
 
@@ -171,7 +174,6 @@ RECOVERY = {
         "region_name": "eu-central-1",           # optional
         # S3-compatible services: point endpoint_url at them
         # "endpoint_url": "https://<accountid>.r2.cloudflarestorage.com",
-        "password": os.environ["RESTIC_PASSWORD"],
     },
 }
 ```
@@ -186,7 +188,6 @@ RECOVERY = {
         "location": "prod",
         "project_id": "my-project-123456",                    # optional
         "credentials_file": "/etc/secrets/gcs-key.json",      # omit on GCE/GKE/Cloud Run (ADC)
-        "password": os.environ["RESTIC_PASSWORD"],
     },
 }
 ```
@@ -201,7 +202,6 @@ RECOVERY = {
         "location": "prod",
         "account_name": "myaccount",
         "account_key": os.environ["AZURE_KEY"],   # or "sas_token": ...
-        "password": os.environ["RESTIC_PASSWORD"],
     },
 }
 ```
@@ -218,7 +218,6 @@ RECOVERY = {
         "host": "backup.example.com",
         "user": "deploy",
         "path": "/srv/restic/myapp",
-        "password": os.environ["RESTIC_PASSWORD"],   # repository password, not SSH
     },
 }
 ```
@@ -234,7 +233,6 @@ RECOVERY = {
     "OPTIONS": {
         "repository": "rclone:mydropbox:backups/myapp",
         "extra_env": {"RCLONE_CONFIG": "/etc/rclone.conf"},   # optional
-        "password": os.environ["RESTIC_PASSWORD"],
     },
 }
 ```

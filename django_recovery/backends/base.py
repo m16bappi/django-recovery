@@ -2,9 +2,11 @@
 
 A backend turns declarative ``RECOVERY["OPTIONS"]`` into the two things the
 restic subprocess needs: a repository URL string and an environment dict
-carrying credentials. Credentials and the repository password are only ever
-placed in the subprocess environment — never in argv and never in exception
-text.
+carrying storage credentials. ``OPTIONS`` holds connection details only —
+the repository password lives in the top-level ``RECOVERY['PASSWORD']`` /
+``'PASSWORD_FILE'`` keys and is injected by the service layer, never by the
+backend. Credentials are only ever placed in the subprocess environment —
+never in argv and never in exception text.
 
 The option-validation pattern mirrors django-storages' ``BaseStorage``:
 ``get_default_options()`` declares every accepted option with its default,
@@ -13,10 +15,12 @@ and any unknown option raises ``ImproperlyConfigured``.
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
+
 from django.core.exceptions import ImproperlyConfigured
 
 
-class BaseBackend:
+class BaseBackend(ABC):
     """Base class: validates OPTIONS and builds repository URL + env."""
 
     def __init__(self, **options):
@@ -32,25 +36,16 @@ class BaseBackend:
             setattr(self, name, value)
         self._validate()
 
+    @abstractmethod
     def get_default_options(self) -> dict:
         """Every accepted option with its default value.
 
-        Subclasses must include these common options in their own dict
-        (usually via ``{**super().get_default_options(), ...}``).
+        Only declare options the backend actually honours — ``location``
+        belongs solely to the bucket/container backends that apply it.
         """
-        return {
-            "password": None,
-            "password_file": None,
-            "location": "",
-        }
 
     def _validate(self) -> None:
         """Common validation; subclasses extend and call super()."""
-        if bool(self.password) == bool(self.password_file):
-            raise ImproperlyConfigured(
-                f"{self.__class__.__name__} requires exactly one of "
-                f"'password' or 'password_file' in RECOVERY['OPTIONS']."
-            )
 
     def _require(self, *names: str) -> None:
         """Raise unless every option in ``names`` is set and non-empty."""
@@ -66,20 +61,11 @@ class BaseBackend:
         """The restic ``-r`` repository URL."""
         raise NotImplementedError
 
-    def credential_env(self) -> dict[str, str]:
-        """Subclass hook: credential env vars for the restic subprocess."""
-        return {}
-
     def env(self) -> dict[str, str]:
-        """Full env overlay for the restic subprocess (password + credentials)."""
-        overlay = dict(self.credential_env())
-        if self.password:
-            overlay["RESTIC_PASSWORD"] = self.password
-        else:
-            overlay["RESTIC_PASSWORD_FILE"] = self.password_file
-        return overlay
+        """Storage-credential env vars for the restic subprocess.
 
-    def _prefixed(self, base: str) -> str:
-        """Append the ``location`` prefix to ``base`` with a single slash."""
-        location = (self.location or "").strip("/")
-        return f"{base}/{location}" if location else base
+        Passwords are not the backend's concern: the service layer adds
+        ``RESTIC_PASSWORD`` / ``RESTIC_PASSWORD_FILE`` from the top-level
+        ``RECOVERY`` keys.
+        """
+        return {}

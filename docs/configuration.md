@@ -6,11 +6,11 @@ Django's `STORAGES` setting. Nothing is configured through the UI.
 ```python
 RECOVERY = {
     "BACKEND": "django_recovery.backends.S3Backend",   # storage backend class
-    "OPTIONS": {...},                                   # kwargs for that class
+    "OPTIONS": {...},                                   # connection options for that class
+    "PASSWORD": os.environ["RESTIC_PASSWORD"],          # repository password
     "DATABASES": ["default"],
     "MEDIA": False,
     "TAGS": [],
-    "BINARY": None,
 }
 ```
 
@@ -19,7 +19,9 @@ RECOVERY = {
 | Key         | Type        | Default       | Meaning |
 |-------------|-------------|---------------|---------|
 | `BACKEND`   | `str`       | *(required)*  | Dotted path to a storage backend class — see [Storage backends](backends.md). |
-| `OPTIONS`   | `dict`      | `{}`          | Keyword arguments for the backend class: repository location, credentials, and the repository `password` / `password_file`. |
+| `OPTIONS`   | `dict`      | `{}`          | Keyword arguments for the backend class: repository location and storage credentials only. |
+| `PASSWORD`  | `str`       | `None`        | Repository password. Provide this **or** `PASSWORD_FILE`; with neither, restic reads `RESTIC_PASSWORD` from the environment. |
+| `PASSWORD_FILE` | `str`   | `None`        | Path to a file containing the repository password (restic's `RESTIC_PASSWORD_FILE`). |
 | `DATABASES` | `list[str]` | `["default"]` | `DATABASES` aliases to back up. Each produces one snapshot tagged `db:<alias>`. |
 | `MEDIA`     | `bool`      | `False`       | When `True`, also back up `settings.MEDIA_ROOT` as a snapshot tagged `media`. |
 | `TAGS`      | `list[str]` | `[]`          | Extra tags appended to every snapshot (in addition to `db:<alias>` / `media`). |
@@ -30,6 +32,30 @@ RECOVERY = {
 | `SKIP_IF_UNCHANGED` | `bool` | `False`   | Skip snapshot creation when identical to the previous one (`--skip-if-unchanged`, restic ≥ 0.17). |
 | `MEDIA_EXCLUDE` | `list[str]` | `[]`      | `--exclude` patterns applied to the media snapshot only (e.g. `["cache/*", "*.tmp"]`). |
 | `EXTRA_ARGS` | `list[str]` | `[]`         | Escape hatch: raw arguments appended to every restic invocation. |
+
+## Repository password
+
+The password that encrypts the repository. Three ways to provide it, in order of
+precedence:
+
+```python
+RECOVERY = {
+    ...,
+    "PASSWORD": os.environ["RESTIC_PASSWORD"],       # 1. inline string
+    # or
+    "PASSWORD_FILE": "/run/secrets/restic-password", # 2. docker/k8s secret file
+    # or neither:                                    # 3. RESTIC_PASSWORD /
+    #                                                #    RESTIC_PASSWORD_FILE from
+    #                                                #    the process environment
+}
+```
+
+Setting both `PASSWORD` and `PASSWORD_FILE` raises `ImproperlyConfigured`. The
+password never goes in `OPTIONS` — that dict is for backend connection details only.
+
+!!! danger "The repository password is unrecoverable"
+    If you lose it, you lose the backups — restic has no reset and no backdoor.
+    Store it somewhere durable and separate from the repository.
 
 ## Retention policy
 
@@ -82,15 +108,28 @@ and apply to every operation (backup, restore, prune, snapshots).
 
 ## Common backend options
 
-Every backend accepts these in `OPTIONS`:
-
 | Option          | Meaning |
 |-----------------|---------|
-| `password`      | Repository password as a string. Provide this **or** `password_file`. |
-| `password_file` | Path to a file containing the password (mapped to restic's `RESTIC_PASSWORD_FILE`). |
-| `location`      | Prefix inside the bucket/container, where the backend supports it. |
+| `location`      | Prefix inside the bucket/container — S3, GCS, and Azure only. |
 
-Exactly one of `password` / `password_file` is required.
+Each backend accepts exactly the options it honours; anything else (including
+`location` on backends that ignore it) raises `ImproperlyConfigured`. The repository
+password is **not** an option — see [Repository password](#repository-password).
+
+## Typing your settings
+
+Annotate `RECOVERY` with `RecoverySettings` for IDE autocomplete and static key
+checking:
+
+```python
+from django_recovery.types import RecoverySettings
+
+RECOVERY: RecoverySettings = {
+    "BACKEND": "django_recovery.backends.LocalBackend",
+    "OPTIONS": {"path": "/var/backups/repo"},
+    "PASSWORD": os.environ["RESTIC_PASSWORD"],
+}
+```
 
 ## Validation
 
@@ -108,11 +147,8 @@ environment only** — never on the command line (visible in `ps`), never in log
 exception text. Your shell environment is irrelevant: the backend builds the subprocess
 environment from `OPTIONS`, and backend values override anything inherited.
 
-Pull secrets into `OPTIONS` from wherever you keep them:
+Pull storage credentials into `OPTIONS` from wherever you keep them:
 
 ```python
-"OPTIONS": {
-    "secret_key": os.environ["AWS_SECRET"],          # env var
-    "password_file": "/run/secrets/restic-password", # docker/k8s secret file
-}
+"OPTIONS": {"secret_key": os.environ["AWS_SECRET"]},
 ```

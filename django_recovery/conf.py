@@ -18,37 +18,13 @@ from django.core.exceptions import ImproperlyConfigured
 from django.utils.module_loading import import_string
 
 from .backends.base import BaseBackend
+from .types import RecoverySettings, RetentionOptions, TuningOptions
 
-_KNOWN_KEYS = {
-    "BACKEND",
-    "OPTIONS",
-    "DATABASES",
-    "MEDIA",
-    "TAGS",
-    "BINARY",
-    "RETENTION",
-    "TUNING",
-    "HOST",
-    "SKIP_IF_UNCHANGED",
-    "MEDIA_EXCLUDE",
-    "EXTRA_ARGS",
-}
-
-# --keep-* units accepted in RECOVERY["RETENTION"]; "within" takes a restic
-# duration string ("2y5m7d3h"), the rest take positive snapshot counts.
-_RETENTION_KEYS = {"last", "hourly", "daily", "weekly", "monthly", "yearly", "within"}
-
-_TUNING_KEYS = {
-    "compression",
-    "pack_size",
-    "read_concurrency",
-    "limit_upload",
-    "limit_download",
-    "retry_lock",
-    "cache_dir",
-    "no_cache",
-    "connections",
-}
+# Key sets derive from the TypedDicts in .types — the static shape users
+# annotate their settings with and the runtime validation can never drift.
+_KNOWN_KEYS = frozenset(RecoverySettings.__annotations__)
+_RETENTION_KEYS = frozenset(RetentionOptions.__annotations__)
+_TUNING_KEYS = frozenset(TuningOptions.__annotations__)
 
 _COMPRESSION_MODES = {"auto", "off", "fastest", "better", "max"}
 
@@ -62,12 +38,28 @@ class RecoveryConfig:
     media: bool = False
     tags: list[str] = field(default_factory=list)
     binary: str | None = None
+    password: str | None = None
+    password_file: str | None = None
     retention: dict = field(default_factory=dict)
     tuning: dict = field(default_factory=dict)
     host: str | None = None
     skip_if_unchanged: bool = False
     media_exclude: list[str] = field(default_factory=list)
     extra_args: list[str] = field(default_factory=list)
+
+    def restic_env(self) -> dict[str, str]:
+        """Env overlay for restic: backend credentials + repository password.
+
+        With neither ``PASSWORD`` nor ``PASSWORD_FILE`` configured, no
+        password key is added — restic reads ``RESTIC_PASSWORD`` /
+        ``RESTIC_PASSWORD_FILE`` from the inherited process environment.
+        """
+        env = self.backend.env()
+        if self.password:
+            env["RESTIC_PASSWORD"] = self.password
+        elif self.password_file:
+            env["RESTIC_PASSWORD_FILE"] = str(self.password_file)
+        return env
 
 
 def _validate_retention(raw: dict) -> dict:
@@ -158,6 +150,12 @@ def get_config() -> RecoveryConfig:
     options = raw.get("OPTIONS") or {}
     backend = backend_cls(**options)
 
+    if raw.get("PASSWORD") and raw.get("PASSWORD_FILE"):
+        raise ImproperlyConfigured(
+            "settings.RECOVERY accepts only one of 'PASSWORD' or "
+            "'PASSWORD_FILE', not both."
+        )
+
     databases = raw.get("DATABASES") or ["default"]
 
     return RecoveryConfig(
@@ -166,6 +164,8 @@ def get_config() -> RecoveryConfig:
         media=bool(raw.get("MEDIA", False)),
         tags=list(raw.get("TAGS") or []),
         binary=raw.get("BINARY"),
+        password=raw.get("PASSWORD"),
+        password_file=raw.get("PASSWORD_FILE"),
         retention=_validate_retention(raw.get("RETENTION") or {}),
         tuning=_validate_tuning(raw.get("TUNING") or {}),
         host=raw.get("HOST"),
