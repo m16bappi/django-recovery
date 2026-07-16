@@ -44,7 +44,7 @@ class BaseBackend(ABC):
         belongs solely to the bucket/container backends that apply it.
         """
 
-    def _validate(self) -> None:
+    def _validate(self) -> None:  # noqa: B027 — optional hook, not abstract
         """Common validation; subclasses extend and call super()."""
 
     def _require(self, *names: str) -> None:

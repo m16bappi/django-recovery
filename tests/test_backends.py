@@ -18,7 +18,6 @@ from django_recovery.backends import (
     SFTPBackend,
 )
 
-
 # --- base validation ---------------------------------------------------------
 
 def test_unknown_option_raises():
