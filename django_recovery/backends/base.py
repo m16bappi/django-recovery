@@ -45,7 +45,7 @@ class BaseBackend(ABC):
         """
 
     def _validate(self) -> None:  # noqa: B027 — optional hook, not abstract
-        """Common validation; subclasses extend and call super()."""
+        """Optional hook: subclasses override with required-option checks."""
 
     def _require(self, *names: str) -> None:
         """Raise unless every option in ``names`` is set and non-empty."""
