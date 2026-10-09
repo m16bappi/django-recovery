@@ -680,7 +680,10 @@ cron or Celery.</p>
 </tbody>
 </table>
 <p>Host, port, user, and password come from <code>settings.DATABASES</code>, so you don't repeat them
-anywhere.</p>
+anywhere. For PostgreSQL, connection <code>OPTIONS</code> such as <code>sslmode</code> and <code>sslrootcert</code> are
+passed along too. A MySQL <code>HOST</code> that starts with <code>/</code> is treated as a Unix socket.</p>
+<p>SQLite backups copy the database to a temporary file first, so the server needs free
+space in its temp folder about the size of the database.</p>
 <h2 id="how-it-works">How it works<a class="headerlink" href="#how-it-works" title="Permanent link">&para;</a></h2>
 <p>When you back up, restic runs the dump command itself (for example <code>pg_dump</code>) and saves
 what it prints. If the dump fails, restic saves nothing, so you never end up with a
@@ -696,6 +699,13 @@ change since the last backup.</p>
 Only for cloud or SFTP storage. A local folder uses Django's own <code>FileSystemStorage</code>.</p>
 <p><strong>Can I use one repository per database?</strong>
 No. All databases and media go into one repository, separated by labels.</p>
+<p><strong>How do I restore media files?</strong>
+<code>recovery restore</code> only handles databases. For media, use restic directly, with the same
+repository and password. Restore into a spare folder first, look at it, then copy what
+you need back:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>restic<span class="w"> </span>-r<span class="w"> </span>&lt;repository&gt;<span class="w"> </span>restore<span class="w"> </span>latest<span class="w"> </span>--tag<span class="w"> </span>media<span class="w"> </span>--target<span class="w"> </span>/tmp/media-restore
+</code></pre></div>
+<p>The files land under <code>/tmp/media-restore/&lt;your MEDIA_ROOT path&gt;</code>.</p>
 <p><strong>What do I do about "repository is locked"?</strong>
 A backup that got killed halfway can leave a lock behind. Remove it with restic, using
 the same repository and password: <code>restic -r &lt;repository&gt; unlock</code>. For a local folder,
