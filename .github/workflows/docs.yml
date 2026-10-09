@@ -1,30 +1,83 @@
 name: docs
 
+# Versioned docs with mike (one folder per version on gh-pages, plus a version menu):
+#   - push to main      -> "dev"
+#   - push a v* tag     -> "<major>.<minor>" (v1.0.0b1 -> "1.0"), aliased "latest"
+#   - manual dispatch   -> any version from any ref (e.g. backfill an old release)
+
 on:
   push:
     branches: [main]
-    paths:
+    tags: ["v*"]
+    paths:  # path filters apply to branch pushes only; tag pushes always run
       - "docs/**"
       - "mkdocs.yml"
       - ".github/workflows/docs.yml"
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Docs version to publish, e.g. 1.0"
+        required: true
+      ref:
+        description: "Branch or tag to build the docs from"
+        default: main
+      latest:
+        description: "Also make this version 'latest' (the default)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
+
+concurrency:
+  group: docs-deploy  # mike commits to gh-pages; never run two deploys at once
+  cancel-in-progress: false
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          fetch-depth: 0  # mike needs the gh-pages branch
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - name: Install mkdocs
-        run: pip install mkdocs-material
+        run: pip install mkdocs-material "mike==2.1.3"
       - name: Configure git identity
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-      - name: Deploy to GitHub Pages
-        run: mkdocs gh-deploy --force
+      - name: Pick version
+        id: pick
+        env:
+          EVENT: ${{ github.event_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_LATEST: ${{ inputs.latest }}
+        run: |
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            version="$INPUT_VERSION"
+            latest="$INPUT_LATEST"
+          elif [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            version="$(echo "${GITHUB_REF_NAME#v}" | cut -d. -f1,2)"
+            latest=true
+          else
+            version=dev
+            latest=false
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "latest=$latest" >> "$GITHUB_OUTPUT"
+      - name: Deploy
+        env:
+          VERSION: ${{ steps.pick.outputs.version }}
+          LATEST: ${{ steps.pick.outputs.latest }}
+        run: |
+          git fetch origin gh-pages --depth=1 || true
+          if [ "$LATEST" = "true" ]; then
+            mike deploy --push --update-aliases "$VERSION" latest
+            mike set-default --push latest
+          else
+            mike deploy --push "$VERSION"
+          fi

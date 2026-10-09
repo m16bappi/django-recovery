@@ -1,127 +1,94 @@
 # Storage
 
-django-recovery keeps backups in one of your Django [`STORAGES`](https://docs.djangoproject.com/en/stable/ref/settings/#storages)
-aliases. Point `RECOVERY['STORAGE']` at the alias; the restic repository URL and
-credentials are read from that storage's resolved settings — including the global
-`AWS_*` / `GS_*` / `AZURE_*` / `SFTP_*` settings django-storages falls back to.
-Nothing is configured twice.
+Backups go to one of your Django `STORAGES`. Give it a name, then put that name in
+`RECOVERY["STORAGE"]`:
 
 ```python
-STORAGES = {
-    "default": {...},
-    "staticfiles": {...},
-    "backups": {
-        "BACKEND": "storages.backends.s3.S3Storage",
-        "OPTIONS": {"bucket_name": "myapp-backups"},
-    },
-}
-
-RECOVERY = {
-    "STORAGE": "backups",
-    "PASSWORD": os.environ["RESTIC_PASSWORD"],
-}
+RECOVERY = {"STORAGE": "backups", "PASSWORD": os.environ["RESTIC_PASSWORD"]}
 ```
 
-restic still performs every read and write; django-recovery only reads the storage's
-settings. Installing and configuring the storage itself is your project's concern —
-follow the [django-storages documentation](https://django-storages.readthedocs.io/)
-for cloud backends.
+django-recovery reads the bucket, folder, and credentials from that storage. You do not
+write them twice. For cloud storage, install and set up
+[django-storages](https://django-storages.readthedocs.io/) as you normally would.
 
-!!! warning "Use a dedicated alias for backups"
-    Reusing the media storage means the web app's credentials can also delete your
-    backups. Prefer a separate bucket (ideally with object lock or write-only
-    credentials). At minimum, give backups their own alias with a distinct prefix —
-    credentials still come from the global settings:
+!!! warning "Use a separate storage for backups"
+    If backups share the media bucket and its keys, anyone who gets those keys can
+    delete your backups too. Use a separate bucket if you can. At least use a separate
+    folder (`location`) — see the S3 example below.
 
-    ```python
-    "backups": {
-        "BACKEND": "storages.backends.s3.S3Storage",
-        "OPTIONS": {"location": "restic"},   # same bucket as media, separate prefix
-    },
-    ```
-
-## Supported storages
-
-Subclasses of these classes are supported too (e.g. `class MediaStorage(S3Storage)`).
-Settings with no restic equivalent raise `ImproperlyConfigured` rather than being
-silently ignored; settings unrelated to the connection (ACLs, querystring auth, ...)
-are ignored.
-
-### Local directory — `django.core.files.storage.FileSystemStorage`
-
-Django's built-in storage; no extra packages.
+## Local folder
 
 ```python
 "backups": {
     "BACKEND": "django.core.files.storage.FileSystemStorage",
-    "OPTIONS": {"location": "/var/backups/myapp-restic"},
+    "OPTIONS": {"location": "/var/backups/myapp"},
 }
 ```
 
-| Storage setting | Meaning |
-|---|---|
-| `location` | Repository directory. Must be **outside `MEDIA_ROOT`**. |
+The folder must be **outside `MEDIA_ROOT`**, or django-recovery stops with an error.
 
-`FileSystemStorage` defaults to `MEDIA_ROOT`, so `location` is effectively required:
-a repository inside `MEDIA_ROOT` would be served under `MEDIA_URL` and swept into its
-own media backup.
+## Amazon S3 (and R2, B2, MinIO, Spaces, Wasabi)
 
-### Amazon S3 and compatibles — `storages.backends.s3.S3Storage`
+```python
+"backups": {
+    "BACKEND": "storages.backends.s3.S3Storage",
+    "OPTIONS": {
+        "bucket_name": "myapp-backups",
+        "location": "restic",                      # optional folder in the bucket
+        # "endpoint_url": "http://minio:9000",     # for S3-compatible services
+    },
+}
+```
 
-Also `S3Boto3Storage`. Works with R2, B2, Spaces, MinIO, Wasabi via `endpoint_url`.
+Keys come from the storage options or your `AWS_*` settings. With no keys, restic uses
+the server's IAM role. `session_profile` (an AWS profile name) also works.
 
-| Storage setting | Meaning |
-|---|---|
-| `bucket_name` | Bucket name (required). |
-| `location` | Key prefix inside the bucket. |
-| `access_key` / `secret_key` | Static credentials (both or neither). |
-| `security_token` | STS session token. |
-| `session_profile` | Named profile from the AWS shared credentials file (`AWS_PROFILE`). |
-| `endpoint_url` | S3-compatible endpoint; `http://` is kept for plain-HTTP MinIO. |
-| `region_name` | Region. |
+## Google Cloud Storage
 
-With no keys and no profile, restic uses the AWS default credential chain (IAM role,
-instance profile, environment).
+```python
+"backups": {
+    "BACKEND": "storages.backends.gcloud.GoogleCloudStorage",
+    "OPTIONS": {"bucket_name": "myapp-backups", "location": "restic"},
+}
+```
 
-### Google Cloud Storage — `storages.backends.gcloud.GoogleCloudStorage`
+On Google Cloud (GCE, GKE, Cloud Run) it uses the attached service account — nothing
+else to do. Elsewhere, set the `GOOGLE_APPLICATION_CREDENTIALS` environment variable to
+your key file. (A `GS_CREDENTIALS` object alone is not enough for restic.)
 
-| Storage setting | Meaning |
-|---|---|
-| `bucket_name` | Bucket name (required). |
-| `location` | Prefix inside the bucket. |
-| `project_id` | GCP project id. |
+## Azure Blob Storage
 
-`GS_CREDENTIALS` is a Python credentials object restic cannot use. Rely on
-Application Default Credentials (attached service account on GCE/GKE/Cloud Run —
-recommended), or set the `GOOGLE_APPLICATION_CREDENTIALS` environment variable to the
-service-account JSON key path. `custom_endpoint` is not supported.
+```python
+"backups": {
+    "BACKEND": "storages.backends.azure_storage.AzureStorage",
+    "OPTIONS": {
+        "azure_container": "backups",
+        "account_name": "myaccount",
+        "account_key": os.environ["AZURE_KEY"],   # or "sas_token"
+    },
+}
+```
 
-### Azure Blob Storage — `storages.backends.azure_storage.AzureStorage`
+Use `account_key` **or** `sas_token`. `connection_string` and `token_credential` are not
+supported.
 
-| Storage setting | Meaning |
-|---|---|
-| `azure_container` | Container name (required). |
-| `account_name` | Storage account (required). |
-| `account_key` / `sas_token` | Exactly one of the two. |
-| `endpoint_suffix` | Sovereign clouds, e.g. `core.chinacloudapi.cn`. |
-| `location` | Prefix inside the container. |
+## SFTP
 
-`connection_string`, `token_credential`, and `azure_ssl=False` are not supported.
+```python
+"backups": {
+    "BACKEND": "storages.backends.sftpstorage.SFTPStorage",
+    "OPTIONS": {
+        "host": "backup.example.com",
+        "root_path": "/srv/backups/myapp",
+        "params": {"username": "deploy", "port": 22},
+    },
+}
+```
 
-### SFTP — `storages.backends.sftpstorage.SFTPStorage`
+restic uses your system `ssh`, so log in with an SSH key set up in `~/.ssh/config` or
+ssh-agent. Passwords and `key_filename` in `params` are not supported.
 
-| Storage setting | Meaning |
-|---|---|
-| `host` | SSH host or `~/.ssh/config` alias (required). |
-| `root_path` | Repository path; relative paths are relative to the login home (required). |
-| `params['username']` | SSH user. |
-| `params['port']` | SSH port. |
+## Anything else?
 
-restic drives the system `ssh` client, so `params['password']`, `key_filename`, and
-`pkey` are rejected: configure the key in `~/.ssh/config` or ssh-agent for the user
-running Django.
-
-## Not supported
-
-Other storage classes (FTP, Dropbox, Apache Libcloud, in-memory, ...) have no restic
-repository equivalent and raise `ImproperlyConfigured`.
+Other storages (FTP, Dropbox, ...) cannot hold a restic repository. django-recovery
+stops with a clear error if you use one.
