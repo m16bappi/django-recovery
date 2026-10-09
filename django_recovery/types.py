@@ -36,7 +36,11 @@ class RetentionOptions(TypedDict, total=False):
 
 
 class TuningOptions(TypedDict, total=False):
-    """``RECOVERY['TUNING']`` — restic performance flags (1:1 mapping)."""
+    """``RECOVERY['TUNING']`` — restic performance flags (1:1 mapping).
+
+    ``timeout`` is the exception: seconds before django-recovery kills a
+    restic call (not a restic flag). Unset or 0 means no limit.
+    """
 
     compression: Literal["auto", "off", "fastest", "better", "max"]
     pack_size: int
@@ -47,6 +51,7 @@ class TuningOptions(TypedDict, total=False):
     cache_dir: str
     no_cache: bool
     connections: int
+    timeout: int
 
 
 class _RecoveryRequired(TypedDict):

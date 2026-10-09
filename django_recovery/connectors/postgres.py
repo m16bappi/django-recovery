@@ -4,6 +4,22 @@ from __future__ import annotations
 
 from .base import BaseConnector
 
+# DATABASES[alias]["OPTIONS"] keys that are libpq connection parameters, and
+# the environment variable pg_dump/psql read them from. Django-only keys
+# (isolation_level, pool, server_side_binding, ...) have no CLI meaning.
+_LIBPQ_ENV = {
+    "sslmode": "PGSSLMODE",
+    "sslrootcert": "PGSSLROOTCERT",
+    "sslcert": "PGSSLCERT",
+    "sslkey": "PGSSLKEY",
+    "sslcrl": "PGSSLCRL",
+    "service": "PGSERVICE",
+    "passfile": "PGPASSFILE",
+    "connect_timeout": "PGCONNECT_TIMEOUT",
+    "target_session_attrs": "PGTARGETSESSIONATTRS",
+    "options": "PGOPTIONS",
+}
+
 
 class Postgres(BaseConnector):
     """Dump/restore a PostgreSQL database via ``pg_dump`` and ``psql``.
@@ -39,5 +55,18 @@ class Postgres(BaseConnector):
         return cmd
 
     def extra_env(self) -> dict[str, str]:
+        """``PGPASSWORD`` plus libpq ``OPTIONS`` (sslmode, service, ...).
+
+        Without these, an ``sslmode='verify-full'`` database would be dumped
+        over whatever connection libpq negotiates by default.
+        """
+        env = {
+            var: str(value)
+            for key, var in _LIBPQ_ENV.items()
+            if (value := (self.settings_dict.get("OPTIONS") or {}).get(key))
+            is not None
+        }
         password = self.settings_dict.get("PASSWORD")
-        return {"PGPASSWORD": password} if password else {}
+        if password:
+            env["PGPASSWORD"] = password
+        return env

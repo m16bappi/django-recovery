@@ -18,6 +18,9 @@ from .restic import Restic, Snapshot
 
 LogCallback = Callable[[str], None]
 
+# --stdin-from-command, which every database backup relies on.
+MIN_RESTIC_VERSION = (0, 16, 0)
+
 
 def _noop(_message: str) -> None:
     """Default log sink: discard the message."""
@@ -32,6 +35,7 @@ def _make_restic(config: RecoveryConfig | None = None) -> Restic:
         extra_env=config.restic_env(),
         binary=binary,
         global_args=build_global_args(config),
+        timeout=config.tuning.get("timeout"),
     )
 
 
@@ -43,10 +47,17 @@ def run_init(
 
     Idempotent: when the repository already exists the call logs and
     returns instead of failing (``restic init`` errors on an existing
-    repository).
+    repository). Also checks the restic version once, so a too-old binary
+    is reported here rather than as a cryptic failure on the first backup.
     """
     log = log_callback or _noop
     restic = _make_restic(config)
+    version = restic.version_info()
+    if version is not None and version < MIN_RESTIC_VERSION:
+        raise RuntimeError(
+            f"restic {'.'.join(map(str, version))} is too old; django-recovery "
+            f"needs {'.'.join(map(str, MIN_RESTIC_VERSION))} or newer."
+        )
     if restic.is_initialized():
         log("Repository already initialized; skipping.")
         return None
@@ -130,7 +141,13 @@ def run_restore(
     db_tag = f"db:{alias}"
 
     log(f"Resolving snapshot '{snapshot_id}' for database '{alias}'...")
-    snapshots = restic.snapshots()
+    # Ask restic for only the candidates. An explicit id is looked up without
+    # a tag filter so a backup of another database still hits the tag guard
+    # below (a clear error) instead of "not found".
+    if snapshot_id == "latest":
+        snapshots = restic.snapshots(tags=[db_tag])
+    else:
+        snapshots = restic.snapshots(snapshot_ids=[snapshot_id])
 
     snapshot = _resolve_snapshot(snapshots, snapshot_id, db_tag)
     if snapshot is None:
@@ -176,16 +193,17 @@ def _resolve_snapshot(
 ) -> Snapshot | None:
     """Find the snapshot matching ``snapshot_id``.
 
-    ``"latest"`` selects the newest snapshot carrying ``db_tag``; otherwise
-    match by full ``id`` or ``short_id``.
+    ``"latest"`` selects the newest snapshot carrying ``db_tag`` (by parsed
+    time, so mixed timezone offsets order correctly); otherwise match by id
+    prefix, as restic does.
     """
     if snapshot_id == "latest":
         candidates = [s for s in snapshots if db_tag in s.tags]
         if not candidates:
             return None
-        return max(candidates, key=lambda s: s.time)
+        return max(candidates, key=lambda s: s.timestamp)
     for s in snapshots:
-        if snapshot_id in (s.id, s.short_id):
+        if s.id.startswith(snapshot_id) or snapshot_id == s.short_id:
             return s
     return None
 

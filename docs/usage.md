@@ -71,7 +71,11 @@ Whichever you use, the process needs `restic` and your database tools on its `PA
 | SQLite | nothing |
 
 Host, port, user, and password come from `settings.DATABASES`, so you don't repeat them
-anywhere.
+anywhere. For PostgreSQL, connection `OPTIONS` such as `sslmode` and `sslrootcert` are
+passed along too. A MySQL `HOST` that starts with `/` is treated as a Unix socket.
+
+SQLite backups copy the database to a temporary file first, so the server needs free
+space in its temp folder about the size of the database.
 
 ## How it works
 
@@ -94,6 +98,17 @@ Only for cloud or SFTP storage. A local folder uses Django's own `FileSystemStor
 
 **Can I use one repository per database?**
 No. All databases and media go into one repository, separated by labels.
+
+**How do I restore media files?**
+`recovery restore` only handles databases. For media, use restic directly, with the same
+repository and password. Restore into a spare folder first, look at it, then copy what
+you need back:
+
+```bash
+restic -r <repository> restore latest --tag media --target /tmp/media-restore
+```
+
+The files land under `/tmp/media-restore/<your MEDIA_ROOT path>`.
 
 **What do I do about "repository is locked"?**
 A backup that got killed halfway can leave a lock behind. Remove it with restic, using

@@ -63,6 +63,10 @@ Other keys: `last` (the newest N), `hourly`, `yearly`, and `within` (keep everyt
 newer than, for example, `"7d"`). Each database and the media files are counted
 separately, so one never pushes out another.
 
+One catch: your `TAGS` are part of that grouping too. If you change `TAGS` later, new
+backups start a fresh group, and the old ones are no longer counted against the new
+policy. Clean those up once with `restic forget` (or `recovery remove`).
+
 ## Speed
 
 You can skip this section. The defaults are fine for most projects, but if backups are
@@ -79,8 +83,13 @@ slow or use too much bandwidth, these map straight to restic's own options:
     "connections": 5,        # parallel connections to cloud storage
     "cache_dir": None,       # where restic keeps its cache
     "no_cache": False,       # turn the cache off
+    "timeout": 3600,         # seconds before a stuck restic call is stopped
 }
 ```
+
+`timeout` is the only one that isn't a restic option. Without it, a repository that stops
+responding can keep a cron job or Celery worker waiting forever. If it does trigger, run
+`restic unlock` before the next backup.
 
 ## Autocomplete in your editor
 
@@ -94,3 +103,7 @@ RECOVERY: RecoverySettings = {"STORAGE": "backups"}
 
 Passwords and keys are passed to restic through environment variables only. They never
 appear on the command line, in logs, or in error messages.
+
+restic runs the database dump itself, so `pg_dump` and `mysqldump` start with the same
+environment as restic: your storage keys and the repository password included. That's
+fine for the standard tools, but keep it in mind if you swap in a custom dump script.

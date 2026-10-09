@@ -314,3 +314,59 @@ def test_dump_popen_no_json_and_stdout_pipe(monkeypatch):
     assert argv == ["restic", "-r", "/repo", "dump", "latest", "default.sql"]
     assert calls[0].kwargs["stdout"] is subprocess.PIPE
     assert "env" in calls[0].kwargs
+
+
+# --- review fixes: time parsing, id lookup, timeout, version ----------------------
+
+def test_snapshot_timestamp_orders_mixed_offsets_correctly():
+    # 10:30+02:00 is 08:30 UTC, i.e. *earlier* than 09:00Z, though it sorts
+    # later as a string.
+    early = Snapshot(id="a", short_id="a", time="2026-07-14T10:30:00.123456789+02:00")
+    late = Snapshot(id="b", short_id="b", time="2026-07-14T09:00:00Z")
+    assert early.time > late.time  # the old string comparison got this wrong
+    assert max([early, late], key=lambda s: s.timestamp) is late
+
+
+@pytest.mark.parametrize("value", [
+    "2026-07-14T10:00:00Z",
+    "2026-07-14T10:00:00.5+00:00",
+    "2026-07-14T10:00:00.123456789-05:30",
+])
+def test_parse_time_accepts_restic_formats(value):
+    assert restic_mod._parse_time(value).tzinfo is not None
+
+
+def test_snapshots_with_ids_argv(mock_run):
+    mock_run.stdout = "[]"
+    Restic(repository="/repo", binary="restic").snapshots(snapshot_ids=["abc123"])
+    argv = mock_run.calls[0].args[0]
+    assert argv == ["restic", "--json", "-r", "/repo", "snapshots", "abc123"]
+
+
+def test_timeout_is_passed_to_subprocess(mock_run):
+    Restic(repository="/repo", binary="restic", timeout=60).unlock()
+    assert mock_run.calls[0].kwargs["timeout"] == 60
+
+
+def test_no_timeout_by_default(mock_run):
+    Restic(repository="/repo", binary="restic", timeout=0).unlock()
+    assert mock_run.calls[0].kwargs["timeout"] is None
+
+
+def test_timeout_expired_raises_restic_error(monkeypatch):
+    def fake_run(argv, *args, **kwargs):
+        raise subprocess.TimeoutExpired(argv, kwargs["timeout"])
+
+    monkeypatch.setattr(restic_mod.subprocess, "run", fake_run)
+    with pytest.raises(ResticError, match="timed out after 5s"):
+        Restic(repository="/repo", binary="restic", timeout=5).unlock()
+
+
+@pytest.mark.parametrize("stdout, expected", [
+    ("restic 0.17.3 compiled with go1.23.1 on linux/amd64\n", (0, 17, 3)),
+    ("restic 0.18.0-dev (compiled manually)\n", (0, 18, 0)),
+    ("something unexpected\n", None),
+])
+def test_version_info(mock_run, stdout, expected):
+    mock_run.stdout = stdout
+    assert Restic(repository="/repo", binary="restic").version_info() == expected

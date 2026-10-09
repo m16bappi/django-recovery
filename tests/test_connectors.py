@@ -263,3 +263,21 @@ def test_mysql_unix_socket_host_uses_socket_flag():
     assert c.restore_command() == [
         "mysql", "--socket", "/var/run/mysqld/mysqld.sock", "-u", "app", "appdb",
     ]
+
+
+def test_postgres_libpq_options_become_env():
+    c = Postgres("default", {
+        "NAME": "appdb", "USER": "app", "PASSWORD": "secret",
+        "OPTIONS": {
+            "sslmode": "verify-full",
+            "sslrootcert": "/etc/ssl/rds.pem",
+            "connect_timeout": 10,
+            "isolation_level": 1,  # Django-only: ignored
+        },
+    })
+    assert c.extra_env() == {
+        "PGSSLMODE": "verify-full",
+        "PGSSLROOTCERT": "/etc/ssl/rds.pem",
+        "PGCONNECT_TIMEOUT": "10",
+        "PGPASSWORD": "secret",
+    }

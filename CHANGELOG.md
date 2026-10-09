@@ -4,6 +4,31 @@ All notable changes to django-recovery are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- `TUNING["timeout"]`: seconds before a restic call is stopped, so a stuck
+  repository can't hang cron or Celery forever. Off by default.
+- PostgreSQL connection `OPTIONS` (`sslmode`, `sslrootcert`, `sslcert`,
+  `sslkey`, `service`, `passfile`, ...) are passed to `pg_dump`/`psql`.
+- `recovery init` checks the restic version and rejects anything older than
+  0.16.
+
+### Fixed
+
+- `restore --snapshot latest` compares parsed timestamps, so snapshots with
+  different timezone offsets are ordered correctly. Restic is asked only for
+  the relevant snapshots, and snapshot id prefixes work like in restic.
+- `MEDIA=True` with an empty `MEDIA_ROOT` raises `ImproperlyConfigured`.
+- `STORAGE` must be a string.
+- S3 with `AWS_S3_USE_SSL=False` and a scheme-less `endpoint_url` uses HTTP.
+
+### Docs
+
+- How to restore media files with restic, the `TAGS`/retention interaction,
+  SQLite temp space, and which secrets the dump process can see.
+
 ## [1.0.0b2] - 2026-10-09
 
 ### Fixed

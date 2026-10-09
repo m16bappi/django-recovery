@@ -44,6 +44,7 @@ def _connector(*, dump=None, restore=None, extra_env=None, stdin="default.sql"):
 def mock_restic(monkeypatch):
     """Patch services.Restic; return the mock instance _make_restic yields."""
     instance = MagicMock(name="restic_instance")
+    instance.version_info.return_value = (0, 19, 1)
     cls = MagicMock(name="Restic", return_value=instance)
     monkeypatch.setattr(services, "Restic", cls)
     return instance
@@ -242,3 +243,69 @@ def test_run_init_skips_when_already_initialized(mock_restic):
     services.run_init(config=_config(), log_callback=messages.append)
     mock_restic.init.assert_not_called()
     assert messages == ["Repository already initialized; skipping."]
+
+
+# --- review fixes -------------------------------------------------------------------
+
+def test_run_init_rejects_too_old_restic(mock_restic):
+    mock_restic.version_info.return_value = (0, 15, 2)
+    with pytest.raises(RuntimeError, match="restic 0.15.2 is too old.*0.16.0"):
+        services.run_init(config=_config())
+    mock_restic.init.assert_not_called()
+
+
+def test_run_init_tolerates_unparsable_version(mock_restic):
+    mock_restic.version_info.return_value = None
+    mock_restic.is_initialized.return_value = False
+    services.run_init(config=_config())
+    mock_restic.init.assert_called_once_with()
+
+
+def _stub_restore(mock_restic, monkeypatch):
+    mock_restic.dump_popen.return_value = SimpleNamespace(
+        stdout=MagicMock(), returncode=0, wait=MagicMock(return_value=0)
+    )
+    monkeypatch.setattr(services, "get_connector", MagicMock(return_value=_connector()))
+    monkeypatch.setattr(
+        services.subprocess, "run",
+        MagicMock(return_value=SimpleNamespace(returncode=0)),
+    )
+
+
+def test_run_restore_latest_asks_restic_for_tagged_snapshots(mock_restic, monkeypatch):
+    mock_restic.snapshots.return_value = [
+        Snapshot(id="x1", short_id="x1", time="2026-07-14T10:00:00Z", tags=["db:default"]),
+    ]
+    _stub_restore(mock_restic, monkeypatch)
+    services.run_restore("default", "latest", config=_config())
+    mock_restic.snapshots.assert_called_once_with(tags=["db:default"])
+
+
+def test_run_restore_by_id_asks_restic_for_that_id(mock_restic, monkeypatch):
+    mock_restic.snapshots.return_value = [
+        Snapshot(id="abc123def456", short_id="abc123de", time="t", tags=["db:default"]),
+    ]
+    _stub_restore(mock_restic, monkeypatch)
+    services.run_restore("default", "abc1", config=_config())  # prefix, like restic
+    mock_restic.snapshots.assert_called_once_with(snapshot_ids=["abc1"])
+    mock_restic.dump_popen.assert_called_once_with("abc123def456", "default.sql")
+
+
+def test_run_restore_latest_compares_times_across_offsets(mock_restic, monkeypatch):
+    mock_restic.snapshots.return_value = [
+        # 10:30+02:00 == 08:30Z: older, even though it sorts later as text.
+        Snapshot(id="older", short_id="o", time="2026-07-14T10:30:00+02:00",
+                 tags=["db:default"]),
+        Snapshot(id="newer", short_id="n", time="2026-07-14T09:00:00Z",
+                 tags=["db:default"]),
+    ]
+    _stub_restore(mock_restic, monkeypatch)
+    services.run_restore("default", "latest", config=_config())
+    mock_restic.dump_popen.assert_called_once_with("newer", "default.sql")
+
+
+def test_make_restic_passes_tuning_timeout(monkeypatch):
+    cls = MagicMock(name="Restic")
+    monkeypatch.setattr(services, "Restic", cls)
+    services._make_restic(_config(tuning={"timeout": 3600}))
+    assert cls.call_args.kwargs["timeout"] == 3600

@@ -11,8 +11,10 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 from dataclasses import dataclass, field
+from datetime import datetime
 
 
 class ResticError(RuntimeError):
@@ -29,6 +31,20 @@ class ResticError(RuntimeError):
 
     def __str__(self) -> str:
         return f"restic exited with code {self.returncode}: {self.stderr}"
+
+
+_FRACTION = re.compile(r"\.(\d+)")
+
+
+def _parse_time(value: str) -> datetime:
+    """Parse restic's RFC 3339 timestamp (nanoseconds, ``Z`` or offset).
+
+    ``datetime.fromisoformat`` on Python 3.10 accepts only 3 or 6 fractional
+    digits and no ``Z``, so normalise both before parsing.
+    """
+    value = value.replace("Z", "+00:00")
+    value = _FRACTION.sub(lambda m: "." + m.group(1)[:6].ljust(6, "0"), value, count=1)
+    return datetime.fromisoformat(value)
 
 
 @dataclass
@@ -58,6 +74,11 @@ class Snapshot:
             hostname=d.get("hostname", ""),
         )
 
+    @property
+    def timestamp(self) -> datetime:
+        """``time`` as a timezone-aware datetime, for correct ordering."""
+        return _parse_time(self.time)
+
 
 class Restic:
     """Constructs and runs restic CLI commands against one repository."""
@@ -68,11 +89,14 @@ class Restic:
         extra_env: dict[str, str] | None = None,
         binary: str = "restic",
         global_args: list[str] | None = None,
+        timeout: int | None = None,
     ):
         self.repository = repository
         self.extra_env = dict(extra_env or {})
         self.binary = binary
         self.global_args = list(global_args or [])
+        # Seconds before a restic call is killed; None/0 waits forever.
+        self.timeout = timeout or None
 
     # -- internals ---------------------------------------------------------
 
@@ -100,12 +124,20 @@ class Restic:
         env = self._env()
         if extra_env:
             env.update(extra_env)
-        proc = subprocess.run(
-            argv,
-            env=env,
-            capture_output=True,
-            text=True,
-        )
+        try:
+            proc = subprocess.run(
+                argv,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=self.timeout,
+            )
+        except subprocess.TimeoutExpired as exc:
+            # subprocess.run has already killed restic. A killed run can leave
+            # a stale lock; `restic unlock` clears it.
+            raise ResticError(
+                -1, f"timed out after {self.timeout}s (TUNING['timeout'])"
+            ) from exc
         if proc.returncode != 0:
             raise ResticError(proc.returncode, proc.stderr)
         return proc
@@ -186,10 +218,16 @@ class Restic:
             argv += ["--exclude", pattern]
         return self._run(argv)
 
-    def snapshots(self, tags: list[str] | None = None) -> list[Snapshot]:
+    def snapshots(
+        self,
+        tags: list[str] | None = None,
+        snapshot_ids: list[str] | None = None,
+    ) -> list[Snapshot]:
+        """List snapshots, optionally filtered by tags and/or id (prefixes)."""
         argv = self._base_argv() + ["snapshots"]
         for tag in tags or []:
             argv += ["--tag", tag]
+        argv += list(snapshot_ids or [])
         proc = self._run(argv)
         data = json.loads(proc.stdout or "[]")
         return [Snapshot.from_json(d) for d in data]
@@ -258,3 +296,8 @@ class Restic:
     def version(self) -> str:
         proc = self._run([self.binary, "version"])
         return proc.stdout.strip()
+
+    def version_info(self) -> tuple[int, int, int] | None:
+        """``(major, minor, patch)`` from ``restic version``, or None if unparsable."""
+        match = re.search(r"restic (\d+)\.(\d+)\.(\d+)", self.version())
+        return tuple(int(part) for part in match.groups()) if match else None

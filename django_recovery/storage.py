@@ -89,6 +89,9 @@ def _s3(storage) -> Repository:
     endpoint = storage.endpoint_url or _DEFAULT_S3_ENDPOINT
     # restic defaults to HTTPS; an explicit http:// must survive so plain
     # HTTP endpoints (e.g. local MinIO) keep working.
+    if "://" not in endpoint and not getattr(storage, "use_ssl", True):
+        # AWS_S3_USE_SSL=False with a scheme-less endpoint means plain HTTP.
+        endpoint = f"http://{endpoint}"
     endpoint = endpoint.removeprefix("https://").rstrip("/")
     env = {}
     if storage.access_key:

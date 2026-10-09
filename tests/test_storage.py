@@ -331,3 +331,14 @@ def test_real_s3storage_resolves_global_aws_settings():
         repo = repository_from_storage(s3.S3Storage())
     assert repo.url == "s3:http://minio:9000/media/restic"
     assert repo.env["AWS_ACCESS_KEY_ID"] == "AKIA"
+
+
+def test_s3_use_ssl_false_without_scheme_uses_http():
+    storage = FakeS3Storage(bucket_name="b", endpoint_url="minio:9000", use_ssl=False)
+    assert repository_from_storage(storage).url == "s3:http://minio:9000/b"
+
+
+def test_s3_use_ssl_false_keeps_explicit_scheme():
+    storage = FakeS3Storage(bucket_name="b", endpoint_url="https://minio:9000",
+                            use_ssl=False)
+    assert repository_from_storage(storage).url == "s3:minio:9000/b"

@@ -94,7 +94,7 @@ def _validate_tuning(raw: dict) -> dict:
             f"{', '.join(sorted(_COMPRESSION_MODES))}; got {compression!r}."
         )
     for key in ("pack_size", "read_concurrency", "limit_upload", "limit_download",
-                "connections"):
+                "connections", "timeout"):
         value = raw.get(key)
         if value is not None and (
             not isinstance(value, int) or isinstance(value, bool) or value < 0
@@ -129,10 +129,10 @@ def _build_repository(raw: dict) -> Repository:
     from django.core.files.storage import InvalidStorageError, storages
 
     alias = raw.get("STORAGE")
-    if not alias:
+    if not alias or not isinstance(alias, str):
         raise ImproperlyConfigured(
             "settings.RECOVERY['STORAGE'] is required: the settings.STORAGES "
-            "alias to keep backups in, e.g. 'backups'."
+            f"alias (a string) to keep backups in, e.g. 'backups'; got {alias!r}."
         )
     try:
         storage = storages[alias]
@@ -168,6 +168,12 @@ def get_config() -> RecoveryConfig:
 
     repository = _build_repository(raw)
 
+    if raw.get("MEDIA") and not settings.MEDIA_ROOT:
+        raise ImproperlyConfigured(
+            "RECOVERY['MEDIA'] is on but settings.MEDIA_ROOT is empty; set "
+            "MEDIA_ROOT or turn MEDIA off."
+        )
+
     if raw.get("PASSWORD") and raw.get("PASSWORD_FILE"):
         raise ImproperlyConfigured(
             "settings.RECOVERY accepts only one of 'PASSWORD' or "
@@ -191,8 +197,9 @@ def get_config() -> RecoveryConfig:
     )
 
 
-# Repository URL schemes restic accepts; used to scope -o <scheme>.connections.
-_REPO_SCHEMES = {"s3", "gs", "azure", "sftp", "rest", "rclone", "swift", "b2", "local"}
+# Repository URL schemes django_recovery.storage can produce; used to scope
+# -o <scheme>.connections (local paths have no scheme).
+_REPO_SCHEMES = {"s3", "gs", "azure", "sftp"}
 
 
 def build_global_args(config: RecoveryConfig) -> list[str]:

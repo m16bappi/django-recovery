@@ -91,8 +91,37 @@ def test_list_settings_accept_tuples():
         assert get_config().databases == ["default", "analytics"]
 
 
+@pytest.mark.parametrize("value", [{"a": 1}, 3, ["backups"]])
+def test_storage_must_be_a_string(value):
+    with override_settings(RECOVERY=_local(STORAGE=value)):
+        with pytest.raises(ImproperlyConfigured, match="STORAGE.*string"):
+            get_config()
+
+
+def test_media_without_media_root_raises():
+    with override_settings(MEDIA_ROOT="", RECOVERY=_local(MEDIA=True)):
+        with pytest.raises(ImproperlyConfigured, match="MEDIA_ROOT is empty"):
+            get_config()
+
+
+@pytest.mark.parametrize("value", [-1, "1h", True])
+def test_tuning_timeout_must_be_non_negative_int(value):
+    with override_settings(RECOVERY=_local(TUNING={"timeout": value})):
+        with pytest.raises(ImproperlyConfigured, match="timeout"):
+            get_config()
+
+
+def test_tuning_timeout_is_not_a_restic_flag():
+    config = RecoveryConfig(
+        repository=Repository(url="/repo"), databases=["default"],
+        tuning={"timeout": 3600},
+    )
+    assert build_global_args(config) == []
+
+
 def test_operational_keys_parsed():
     with override_settings(
+        MEDIA_ROOT="/srv/media",
         RECOVERY=_local(
             DATABASES=["default", "analytics"],
             MEDIA=True,
