@@ -1,305 +1,153 @@
+"""Tests for ``settings.RECOVERY`` parsing, restic global args, and binary lookup."""
+
 import os
 
 import pytest
 from django.core.exceptions import ImproperlyConfigured
-from django.test import override_settings
 
 from django_recovery import conf
-from django_recovery.conf import (
-    RecoveryConfig,
-    build_global_args,
-    get_config,
-    resolve_binary,
-)
+from django_recovery.conf import build_global_args, get_config, resolve_binary
 from django_recovery.storage import Repository
+from tests.factories import make_config
 
-REPO = os.path.abspath("/tmp/test-repo")  # FileSystemStorage resolves location
-
-
-def _local(**overrides):
-    raw = {
-        "STORAGE": "recovery",
-        "PASSWORD": "test-password",
-    }
-    raw.update(overrides)
-    return raw
+TEST_REPO = os.path.abspath("/tmp/test-repo")  # the testproject "recovery" storage
 
 
-def test_get_config_defaults_filled():
+# --- valid settings --------------------------------------------------------------
+
+def test_testproject_settings_parse_with_defaults():
     config = get_config()
-    assert isinstance(config, RecoveryConfig)
-    assert config.repository == Repository(url=REPO)
+    assert config.repository == Repository(url=TEST_REPO)
     assert config.restic_env() == {"RESTIC_PASSWORD": "test-password"}
-    assert config.password == "test-password"
-    assert config.databases == ["default"]
-    assert config.media is False
-    assert config.tags == ["test"]
+    assert (config.databases, config.media, config.tags) == (["default"], False, ["test"])
     assert config.binary is None
 
 
-def test_get_config_databases_defaults_when_absent():
-    with override_settings(RECOVERY=_local()):
-        config = get_config()
-    assert config.databases == ["default"]
-    assert config.media is False
-    assert config.tags == []
-    assert config.binary is None
-
-
-def test_missing_storage_raises():
-    with override_settings(RECOVERY={"PASSWORD": "pw"}):
-        with pytest.raises(ImproperlyConfigured, match="STORAGE"):
-            get_config()
-
-
-def test_removed_backend_key_rejected():
-    raw = _local(BACKEND="django_recovery.backends.LocalBackend")
-    with override_settings(RECOVERY=raw):
-        with pytest.raises(ImproperlyConfigured, match="Unknown key.*BACKEND"):
-            get_config()
-
-
-def test_removed_options_key_rejected():
-    with override_settings(RECOVERY=_local(OPTIONS={"location": "restic"})):
-        with pytest.raises(ImproperlyConfigured, match="Unknown key.*OPTIONS"):
-            get_config()
-
-
-def test_unknown_top_level_key_raises():
-    with override_settings(RECOVERY=_local(repository="/old/flat/style")):
-        with pytest.raises(ImproperlyConfigured, match="Unknown key"):
-            get_config()
-
-
-def test_recovery_missing_entirely_raises():
-    with override_settings(RECOVERY=None):
-        with pytest.raises(ImproperlyConfigured):
-            get_config()
-
-
-@pytest.mark.parametrize("key", ["DATABASES", "TAGS", "MEDIA_EXCLUDE", "EXTRA_ARGS"])
-@pytest.mark.parametrize("value", ["default", ["ok", 3], {"a": 1}])
-def test_list_settings_reject_non_string_lists(key, value):
-    # A bare string must not be split into characters.
-    with override_settings(RECOVERY=_local(**{key: value})):
-        with pytest.raises(ImproperlyConfigured, match=f"{key}.*list of strings"):
-            get_config()
-
-
-def test_list_settings_accept_tuples():
-    with override_settings(RECOVERY=_local(DATABASES=("default", "analytics"))):
-        assert get_config().databases == ["default", "analytics"]
-
-
-@pytest.mark.parametrize("value", [{"a": 1}, 3, ["backups"]])
-def test_storage_must_be_a_string(value):
-    with override_settings(RECOVERY=_local(STORAGE=value)):
-        with pytest.raises(ImproperlyConfigured, match="STORAGE.*string"):
-            get_config()
-
-
-def test_media_without_media_root_raises():
-    with override_settings(MEDIA_ROOT="", RECOVERY=_local(MEDIA=True)):
-        with pytest.raises(ImproperlyConfigured, match="MEDIA_ROOT is empty"):
-            get_config()
-
-
-@pytest.mark.parametrize("value", [-1, "1h", True])
-def test_tuning_timeout_must_be_non_negative_int(value):
-    with override_settings(RECOVERY=_local(TUNING={"timeout": value})):
-        with pytest.raises(ImproperlyConfigured, match="timeout"):
-            get_config()
-
-
-def test_tuning_timeout_is_not_a_restic_flag():
-    config = RecoveryConfig(
-        repository=Repository(url="/repo"), databases=["default"],
-        tuning={"timeout": 3600},
+def test_every_option_is_parsed(recovery, settings):
+    settings.MEDIA_ROOT = "/srv/media"
+    recovery(
+        DATABASES=("default", "analytics"),  # tuples are accepted too
+        MEDIA=True,
+        MEDIA_EXCLUDE=["*.tmp"],
+        TAGS=["prod"],
+        BINARY="/opt/restic",
+        HOST="web1",
+        SKIP_IF_UNCHANGED=True,
+        RETENTION={"daily": 7, "within": "7d"},
+        TUNING={"compression": "max", "pack_size": 64, "timeout": 3600},
+        EXTRA_ARGS=["--insecure-tls"],
     )
-    assert build_global_args(config) == []
-
-
-def test_operational_keys_parsed():
-    with override_settings(
-        MEDIA_ROOT="/srv/media",
-        RECOVERY=_local(
-            DATABASES=["default", "analytics"],
-            MEDIA=True,
-            TAGS=["prod"],
-            BINARY="/opt/restic",
-        )
-    ):
-        config = get_config()
+    config = get_config()
     assert config.databases == ["default", "analytics"]
-    assert config.media is True
-    assert config.tags == ["prod"]
-    assert config.binary == "/opt/restic"
-
-
-# --- PASSWORD / PASSWORD_FILE ------------------------------------------------
-
-def test_password_file_top_level_parsed():
-    raw = _local()
-    del raw["PASSWORD"]
-    raw["PASSWORD_FILE"] = "/run/secrets/restic"
-    with override_settings(RECOVERY=raw):
-        config = get_config()
-    assert config.restic_env() == {"RESTIC_PASSWORD_FILE": "/run/secrets/restic"}
-
-
-def test_password_and_password_file_both_raise():
-    with override_settings(RECOVERY=_local(PASSWORD_FILE="/f")):
-        with pytest.raises(ImproperlyConfigured, match="not both"):
-            get_config()
-
-
-def test_no_password_keys_accepted_env_is_users_concern():
-    raw = _local()
-    del raw["PASSWORD"]
-    with override_settings(RECOVERY=raw):
-        config = get_config()
-    # No password key in the overlay: restic reads RESTIC_PASSWORD /
-    # RESTIC_PASSWORD_FILE from the inherited process environment.
-    assert config.restic_env() == {}
-
-
-# --- RETENTION / TUNING validation -----------------------------------------
-
-def test_retention_parsed():
-    retention = {"daily": 7, "weekly": 4, "within": "7d"}
-    with override_settings(RECOVERY=_local(RETENTION=retention)):
-        config = get_config()
-    assert config.retention == retention
-
-
-def test_retention_unknown_key_raises():
-    with override_settings(RECOVERY=_local(RETENTION={"dayly": 7})):
-        with pytest.raises(ImproperlyConfigured, match="dayly"):
-            get_config()
-
-
-@pytest.mark.parametrize("bad", [0, -1, "7", True])
-def test_retention_non_positive_int_raises(bad):
-    with override_settings(RECOVERY=_local(RETENTION={"daily": bad})):
-        with pytest.raises(ImproperlyConfigured, match="positive integer"):
-            get_config()
-
-
-def test_retention_within_must_be_string():
-    with override_settings(RECOVERY=_local(RETENTION={"within": 7})):
-        with pytest.raises(ImproperlyConfigured, match="duration string"):
-            get_config()
-
-
-def test_tuning_parsed_and_new_keys():
-    with override_settings(
-        RECOVERY=_local(
-            TUNING={"compression": "max", "pack_size": 64},
-            HOST="web1",
-            SKIP_IF_UNCHANGED=True,
-            MEDIA_EXCLUDE=["*.tmp"],
-            EXTRA_ARGS=["--insecure-tls"],
-        )
-    ):
-        config = get_config()
-    assert config.tuning == {"compression": "max", "pack_size": 64}
-    assert config.host == "web1"
-    assert config.skip_if_unchanged is True
-    assert config.media_exclude == ["*.tmp"]
+    assert (config.media, config.media_exclude, config.tags) == (True, ["*.tmp"], ["prod"])
+    assert (config.binary, config.host, config.skip_if_unchanged) == (
+        "/opt/restic", "web1", True,
+    )
+    assert config.retention == {"daily": 7, "within": "7d"}
+    assert config.tuning == {"compression": "max", "pack_size": 64, "timeout": 3600}
     assert config.extra_args == ["--insecure-tls"]
 
 
-def test_tuning_unknown_key_raises():
-    with override_settings(RECOVERY=_local(TUNING={"speed": 11})):
-        with pytest.raises(ImproperlyConfigured, match="speed"):
-            get_config()
+@pytest.mark.parametrize("overrides, env", [
+    ({"PASSWORD": "pw"}, {"RESTIC_PASSWORD": "pw"}),
+    ({"PASSWORD": None, "PASSWORD_FILE": "/run/secrets/restic"},
+     {"RESTIC_PASSWORD_FILE": "/run/secrets/restic"}),
+    # Neither: restic reads RESTIC_PASSWORD(_FILE) from the process environment.
+    ({"PASSWORD": None}, {}),
+])
+def test_password_sources(recovery, overrides, env):
+    recovery(**overrides)
+    assert get_config().restic_env() == env
 
 
-def test_tuning_bad_compression_raises():
-    with override_settings(RECOVERY=_local(TUNING={"compression": "zstd"})):
-        with pytest.raises(ImproperlyConfigured, match="compression"):
-            get_config()
+# --- invalid settings ----------------------------------------------------------------
+
+LIST_KEYS = ["DATABASES", "TAGS", "MEDIA_EXCLUDE", "EXTRA_ARGS"]
+
+INVALID = [
+    pytest.param({"STORAGE": None}, "STORAGE.*required", id="storage-missing"),
+    *[pytest.param({"STORAGE": v}, "STORAGE.*string", id=f"storage-{type(v).__name__}")
+      for v in ({"a": 1}, 3, ["backups"])],
+    pytest.param({"BACKEND": "x"}, "Unknown key.*BACKEND", id="removed-BACKEND"),
+    pytest.param({"OPTIONS": {}}, "Unknown key.*OPTIONS", id="removed-OPTIONS"),
+    pytest.param({"repository": "/x"}, "Unknown key", id="unknown-key"),
+    pytest.param({"PASSWORD_FILE": "/f"}, "not both", id="password-and-file"),
+    pytest.param({"MEDIA": True}, "MEDIA_ROOT is empty", id="media-without-root"),
+    *[pytest.param({key: value}, f"{key}.*list of strings", id=f"{key}-{type(value).__name__}")
+      for key in LIST_KEYS for value in ("default", ["ok", 3], {"a": 1})],
+    pytest.param({"RETENTION": {"dayly": 7}}, "dayly", id="retention-unknown"),
+    *[pytest.param({"RETENTION": {"daily": v}}, "positive integer", id=f"retention-{v!r}")
+      for v in (0, -1, "7", True)],
+    pytest.param({"RETENTION": {"within": 7}}, "duration string", id="retention-within"),
+    pytest.param({"TUNING": {"speed": 11}}, "speed", id="tuning-unknown"),
+    pytest.param({"TUNING": {"compression": "zstd"}}, "compression", id="tuning-compression"),
+    *[pytest.param({"TUNING": {key: v}}, f"{key}.*non-negative", id=f"tuning-{key}-{v!r}")
+      for key, v in (("pack_size", -1), ("timeout", -1), ("timeout", "1h"), ("timeout", True))],
+]
 
 
-def test_tuning_negative_int_raises():
-    with override_settings(RECOVERY=_local(TUNING={"pack_size": -1})):
-        with pytest.raises(ImproperlyConfigured, match="non-negative"):
-            get_config()
+@pytest.mark.parametrize("overrides, match", INVALID)
+def test_invalid_settings_raise(recovery, overrides, match):
+    recovery(**overrides)
+    with pytest.raises(ImproperlyConfigured, match=match):
+        get_config()
 
 
-# --- build_global_args -------------------------------------------------------
-
-def test_build_global_args_empty_by_default():
-    assert build_global_args(_config()) == []
-
-
-def test_build_global_args_full_tuning():
-    config = RecoveryConfig(
-        repository=Repository(url="/repo"),
-        databases=["default"],
-        tuning={
-            "compression": "max",
-            "pack_size": 64,
-            "limit_upload": 1024,
-            "limit_download": 2048,
-            "retry_lock": "5m",
-            "no_cache": True,
-        },
-        extra_args=["--verbose"],
-    )
-    assert build_global_args(config) == [
-        "--compression", "max",
-        "--pack-size", "64",
-        "--limit-upload", "1024",
-        "--limit-download", "2048",
-        "--retry-lock", "5m",
-        "--no-cache",
-        "--verbose",
-    ]
+def test_missing_recovery_setting_raises(settings):
+    settings.RECOVERY = None
+    with pytest.raises(ImproperlyConfigured, match="RECOVERY is required"):
+        get_config()
 
 
-def test_build_global_args_connections_scoped_to_scheme():
-    config = RecoveryConfig(
-        repository=Repository(url="s3:s3.amazonaws.com/b"),
-        databases=["default"],
-        tuning={"connections": 8},
-    )
-    assert build_global_args(config) == ["-o", "s3.connections=8"]
+# --- build_global_args ---------------------------------------------------------------
+
+@pytest.mark.parametrize("url, tuning, extra_args, expected", [
+    pytest.param("/repo", {}, [], [], id="nothing"),
+    pytest.param(
+        "/repo",
+        {"compression": "max", "pack_size": 64, "limit_upload": 1024,
+         "limit_download": 2048, "retry_lock": "5m", "cache_dir": "/c", "no_cache": True,
+         "read_concurrency": 4, "timeout": 3600},  # last two are not global flags
+        ["--verbose"],
+        ["--compression", "max", "--pack-size", "64", "--limit-upload", "1024",
+         "--limit-download", "2048", "--retry-lock", "5m", "--cache-dir", "/c",
+         "--no-cache", "--verbose"],
+        id="all-tuning",
+    ),
+    pytest.param("s3:s3.amazonaws.com/b", {"connections": 8}, [],
+                 ["-o", "s3.connections=8"], id="connections-scoped-to-scheme"),
+    pytest.param("C:\\backups\\repo", {"connections": 8}, [], [],
+                 id="connections-skipped-for-local-path"),
+])
+def test_build_global_args(url, tuning, extra_args, expected):
+    config = make_config(repository=Repository(url=url), tuning=tuning, extra_args=extra_args)
+    assert build_global_args(config) == expected
 
 
-def test_build_global_args_connections_skipped_for_local_path():
-    config = RecoveryConfig(
-        repository=Repository(url="C:\\backups\\repo"),
-        databases=["default"],
-        tuning={"connections": 8},
-    )
-    # Windows drive letter is not a restic scheme -> no -o emitted.
-    assert build_global_args(config) == []
+# --- resolve_binary ------------------------------------------------------------------
 
-
-def _config(binary=None):
-    return RecoveryConfig(
-        repository=Repository(url="/repo"),
-        databases=["default"],
-        binary=binary,
-    )
-
-
-def test_resolve_binary_explicit_setting_verbatim(monkeypatch):
-    # config.binary is set -> returned as-is, no lookup performed.
-    def boom():  # pragma: no cover - should never be called
-        raise AssertionError("should not be called")
-
-    monkeypatch.setattr(conf.shutil, "which", lambda name: boom())
-    assert resolve_binary(_config(binary="/opt/custom/restic")) == "/opt/custom/restic"
-
-
-def test_resolve_binary_uses_path(monkeypatch):
+def test_resolve_binary_prefers_explicit_setting(monkeypatch):
     monkeypatch.setattr(conf.shutil, "which", lambda name: "/usr/bin/restic")
-    assert resolve_binary(_config()) == "/usr/bin/restic"
+    assert resolve_binary(make_config(binary="/opt/restic")) == "/opt/restic"
 
 
-def test_resolve_binary_all_fail_raises(monkeypatch):
+def test_resolve_binary_falls_back_to_path(monkeypatch):
+    monkeypatch.setattr(conf.shutil, "which", lambda name: "/usr/bin/restic")
+    assert resolve_binary(make_config()) == "/usr/bin/restic"
+
+
+def test_resolve_binary_raises_when_not_found(monkeypatch):
     monkeypatch.setattr(conf.shutil, "which", lambda name: None)
-    with pytest.raises(ImproperlyConfigured):
-        resolve_binary(_config())
+    with pytest.raises(ImproperlyConfigured, match="Could not locate a restic binary"):
+        resolve_binary(make_config())
+
+
+# --- settings shape ------------------------------------------------------------------
+
+def test_known_keys_come_from_the_typeddicts():
+    from django_recovery.types import RecoverySettings, RetentionOptions, TuningOptions
+
+    assert conf._KNOWN_KEYS == frozenset(RecoverySettings.__annotations__)
+    assert conf._RETENTION_KEYS == frozenset(RetentionOptions.__annotations__)
+    assert conf._TUNING_KEYS == frozenset(TuningOptions.__annotations__)
+    assert "STORAGE" in conf._KNOWN_KEYS  # the required key is inherited

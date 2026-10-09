@@ -1,79 +1,81 @@
 """Tests for the service layer.
 
-The service layer is exercised in isolation: the :class:`Restic` class and the
-:func:`get_connector` factory are patched inside ``django_recovery.services``,
-and ``subprocess.run`` is patched for the restore path. No real restic binary,
-database, or connector is required. An explicit :class:`RecoveryConfig` (with
-``binary`` set) is passed into every call so binary resolution is a no-op.
+``Restic`` and ``get_connector`` are replaced inside ``django_recovery.services``
+and the restore client's ``subprocess.run`` is faked, so no restic binary,
+database, or connector is needed. Every call gets an explicit config with
+``binary`` set, so binary resolution is a no-op.
 """
 
+from dataclasses import dataclass, field
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
-from django.test import override_settings
 
 from django_recovery import services
-from django_recovery.conf import RecoveryConfig
-from django_recovery.restic import Snapshot
-from django_recovery.storage import Repository
+from tests.factories import make_config, make_snapshot
 
 
-def _config(*, databases=("default",), media=False, tags=("test",), **extra):
-    return RecoveryConfig(
-        repository=Repository(url="/repo"),
-        password="test-password",
-        databases=list(databases),
-        media=media,
-        tags=list(tags),
-        binary="/usr/bin/restic",
-        **extra,
-    )
+def _config(**overrides):
+    return make_config(binary="/usr/bin/restic", tags=["test"], **overrides)
 
 
-def _connector(*, dump=None, restore=None, extra_env=None, stdin="default.sql"):
-    return SimpleNamespace(
-        dump_command=lambda: list(dump or ["sqlite3", "db", ".dump"]),
-        restore_command=lambda: list(restore or ["sqlite3", "db"]),
-        extra_env=lambda: dict(extra_env or {}),
-        stdin_filename=stdin,
-    )
+@dataclass
+class FakeConnector:
+    dump: list = field(default_factory=lambda: ["pg_dump", "-d", "appdb"])
+    restore: list = field(default_factory=lambda: ["psql", "-d", "appdb"])
+    env: dict = field(default_factory=lambda: {"PGPASSWORD": "secret"})
+    stdin_filename: str = "default.sql"
+
+    def dump_command(self):
+        return list(self.dump)
+
+    def restore_command(self):
+        return list(self.restore)
+
+    def extra_env(self):
+        return dict(self.env)
 
 
 @pytest.fixture
-def mock_restic(monkeypatch):
-    """Patch services.Restic; return the mock instance _make_restic yields."""
-    instance = MagicMock(name="restic_instance")
+def restic(monkeypatch):
+    """The mocked ``Restic`` instance services build (restic 0.19.1)."""
+    instance = MagicMock(name="restic")
     instance.version_info.return_value = (0, 19, 1)
-    cls = MagicMock(name="Restic", return_value=instance)
-    monkeypatch.setattr(services, "Restic", cls)
+    monkeypatch.setattr(services, "Restic", MagicMock(return_value=instance))
     return instance
 
 
 @pytest.fixture
-def mock_get_connector(monkeypatch):
-    conn = _connector()
-    factory = MagicMock(return_value=conn)
-    monkeypatch.setattr(services, "get_connector", factory)
-    factory.connector = conn
-    return factory
-
-
-# --- run_backup ------------------------------------------------------------
-
-def test_run_backup_calls_backup_command_with_tags_and_extra_env(
-    mock_restic, monkeypatch
-):
-    conn = _connector(
-        dump=["pg_dump", "-d", "appdb"],
-        extra_env={"PGPASSWORD": "secret"},
-        stdin="default.sql",
-    )
+def connector(monkeypatch):
+    conn = FakeConnector()
     monkeypatch.setattr(services, "get_connector", MagicMock(return_value=conn))
+    return conn
 
-    summary = services.run_backup(config=_config())
 
-    mock_restic.backup_command.assert_called_once_with(
+@pytest.fixture
+def restore(restic, connector, monkeypatch):
+    """A working dump -> restore pipe. Returns the restore-client mock.
+
+    Tests set ``restic.snapshots.return_value`` and may flip the return codes
+    on ``restic.dump_popen.return_value`` / ``restore.return_value``.
+    """
+    restic.dump_popen.return_value = SimpleNamespace(
+        stdout=MagicMock(), returncode=0, wait=MagicMock(return_value=0)
+    )
+    client = MagicMock(return_value=SimpleNamespace(returncode=0))
+    monkeypatch.setattr(services.subprocess, "run", client)
+    return client
+
+
+# --- backup ---------------------------------------------------------------------
+
+@pytest.mark.usefixtures("connector")
+def test_backup_streams_each_database_through_restic(restic):
+    logs = []
+    summary = services.run_backup(config=_config(), log_callback=logs.append)
+
+    restic.backup_command.assert_called_once_with(
         ["pg_dump", "-d", "appdb"],
         stdin_filename="default.sql",
         tags=["db:default", "test"],
@@ -82,17 +84,28 @@ def test_run_backup_calls_backup_command_with_tags_and_extra_env(
         skip_if_unchanged=False,
         read_concurrency=None,
     )
-    mock_restic.backup_paths.assert_not_called()
+    restic.backup_paths.assert_not_called()
     assert summary == {"default": "ok"}
+    assert logs == ["Backing up database 'default'...", "Database 'default' backed up."]
 
 
-@override_settings(MEDIA_ROOT="/srv/media")
-def test_run_backup_with_media_also_backs_up_media(mock_restic, mock_get_connector):
-    summary = services.run_backup(
-        config=_config(media=True, media_exclude=["*.tmp"])
+@pytest.mark.usefixtures("connector")
+def test_backup_forwards_host_and_tuning(restic):
+    services.run_backup(config=_config(
+        host="web1", skip_if_unchanged=True, tuning={"read_concurrency": 4},
+    ))
+    kwargs = restic.backup_command.call_args.kwargs
+    assert (kwargs["host"], kwargs["skip_if_unchanged"], kwargs["read_concurrency"]) == (
+        "web1", True, 4,
     )
 
-    mock_restic.backup_paths.assert_called_once_with(
+
+@pytest.mark.usefixtures("connector")
+def test_backup_includes_media_when_enabled(restic, settings):
+    settings.MEDIA_ROOT = "/srv/media"
+    summary = services.run_backup(config=_config(media=True, media_exclude=["*.tmp"]))
+
+    restic.backup_paths.assert_called_once_with(
         ["/srv/media"],
         tags=["media", "test"],
         host=None,
@@ -103,209 +116,132 @@ def test_run_backup_with_media_also_backs_up_media(mock_restic, mock_get_connect
     assert summary == {"default": "ok", "media": "ok"}
 
 
-def test_run_backup_forwards_host_and_tuning(mock_restic, mock_get_connector):
-    services.run_backup(
-        config=_config(
-            host="web1",
-            skip_if_unchanged=True,
-            tuning={"read_concurrency": 4},
-        )
-    )
-    kwargs = mock_restic.backup_command.call_args.kwargs
-    assert kwargs["host"] == "web1"
-    assert kwargs["skip_if_unchanged"] is True
-    assert kwargs["read_concurrency"] == 4
+# --- restore --------------------------------------------------------------------------
+
+def test_restore_by_id_pipes_dump_into_restore_client(restic, restore):
+    restic.snapshots.return_value = [make_snapshot("abc123def456")]
+
+    services.run_restore("default", "abc1", config=_config())  # id prefix, like restic
+
+    restic.snapshots.assert_called_once_with(snapshot_ids=["abc1"])
+    restic.dump_popen.assert_called_once_with("abc123def456", "default.sql")
+    (argv,), kwargs = restore.call_args
+    assert argv == ["psql", "-d", "appdb"]
+    assert kwargs["stdin"] is restic.dump_popen.return_value.stdout
+    assert kwargs["env"]["PGPASSWORD"] == "secret"
+    restic.dump_popen.return_value.wait.assert_called_once()
 
 
-def test_run_backup_invokes_log_callback(mock_restic, mock_get_connector):
-    logs = []
-    services.run_backup(config=_config(), log_callback=logs.append)
-    assert logs  # at least one progress message emitted
+@pytest.mark.parametrize("snapshots, expected", [
+    pytest.param(
+        [make_snapshot("old", time="2026-07-14T10:00:00Z"),
+         make_snapshot("new", time="2026-07-14T12:00:00Z"),
+         make_snapshot("other", time="2026-07-14T13:00:00Z", tags=("db:other",))],
+        "new",
+        id="newest-for-this-database",
+    ),
+    pytest.param(
+        # 10:30+02:00 is 08:30Z: older, even though it sorts later as text.
+        [make_snapshot("older", time="2026-07-14T10:30:00+02:00"),
+         make_snapshot("newer", time="2026-07-14T09:00:00Z")],
+        "newer",
+        id="compares-across-timezone-offsets",
+    ),
+])
+@pytest.mark.usefixtures("restore")
+def test_restore_latest_picks_newest_snapshot(restic, snapshots, expected):
+    restic.snapshots.return_value = snapshots
+
+    services.run_restore("default", "latest", config=_config())
+
+    restic.snapshots.assert_called_once_with(tags=["db:default"])
+    restic.dump_popen.assert_called_once_with(expected, "default.sql")
 
 
-# --- run_restore -----------------------------------------------------------
+@pytest.mark.parametrize("snapshot_id, snapshots, match", [
+    ("abc123", [make_snapshot("abc123def456", tags=("db:other",))],
+     "not a backup of database 'default'"),
+    ("abc123", [], "snapshot abc123 not found"),
+    ("latest", [], "snapshot latest not found"),
+])
+def test_restore_refuses_missing_or_foreign_snapshot(
+    restic, restore, snapshot_id, snapshots, match
+):
+    restic.snapshots.return_value = snapshots
 
-def test_run_restore_refuses_wrong_database_tag(mock_restic, monkeypatch):
-    mock_restic.snapshots.return_value = [
-        Snapshot(id="abc123def456", short_id="abc123", time="t",
-                 tags=["db:other"]),
-    ]
-    conn = _connector()
-    monkeypatch.setattr(services, "get_connector", MagicMock(return_value=conn))
-    fake_run = MagicMock()
-    monkeypatch.setattr(services.subprocess, "run", fake_run)
+    with pytest.raises(ValueError, match=match):
+        services.run_restore("default", snapshot_id, config=_config())
 
-    with pytest.raises(ValueError, match="not a backup of database 'default'"):
+    restic.dump_popen.assert_not_called()
+    restore.assert_not_called()
+
+
+@pytest.mark.parametrize("dump_rc, restore_rc, match", [
+    (1, 0, "restic dump failed"),
+    (0, 3, "restore of database 'default' failed .exit code 3."),
+])
+def test_restore_reports_failing_process(restic, restore, dump_rc, restore_rc, match):
+    restic.snapshots.return_value = [make_snapshot()]
+    restic.dump_popen.return_value.returncode = dump_rc
+    restore.return_value.returncode = restore_rc
+
+    with pytest.raises(RuntimeError, match=match):
         services.run_restore("default", "abc123", config=_config())
 
-    mock_restic.dump_popen.assert_not_called()
-    fake_run.assert_not_called()
 
+# --- prune / remove / list ---------------------------------------------------------------
 
-def test_run_restore_happy_path_pipes_dump_into_restore(mock_restic, monkeypatch):
-    mock_restic.snapshots.return_value = [
-        Snapshot(id="abc123def456", short_id="abc123", time="t",
-                 tags=["db:default", "test"]),
-    ]
-    fake_popen = SimpleNamespace(
-        stdout=MagicMock(),
-        returncode=0,
-        wait=MagicMock(return_value=0),
-    )
-    mock_restic.dump_popen.return_value = fake_popen
-
-    conn = _connector(restore=["psql", "-d", "appdb"], extra_env={"PGPASSWORD": "s"})
-    monkeypatch.setattr(services, "get_connector", MagicMock(return_value=conn))
-
-    fake_run = MagicMock(return_value=SimpleNamespace(returncode=0))
-    monkeypatch.setattr(services.subprocess, "run", fake_run)
-
-    services.run_restore("default", "abc123", config=_config())
-
-    # dump reads from the full snapshot id, not the short id.
-    mock_restic.dump_popen.assert_called_once_with("abc123def456", "default.sql")
-
-    args, kwargs = fake_run.call_args
-    assert args[0] == ["psql", "-d", "appdb"]
-    assert kwargs["stdin"] is fake_popen.stdout
-    assert kwargs["env"]["PGPASSWORD"] == "s"
-    fake_popen.wait.assert_called_once()
-
-
-def test_run_restore_latest_resolves_newest_matching(mock_restic, monkeypatch):
-    mock_restic.snapshots.return_value = [
-        Snapshot(id="old111", short_id="old", time="2026-07-14T10:00:00Z",
-                 tags=["db:default"]),
-        Snapshot(id="new222", short_id="new", time="2026-07-14T12:00:00Z",
-                 tags=["db:default"]),
-        Snapshot(id="other333", short_id="oth", time="2026-07-14T13:00:00Z",
-                 tags=["db:other"]),
-    ]
-    fake_popen = SimpleNamespace(
-        stdout=MagicMock(), returncode=0, wait=MagicMock(return_value=0)
-    )
-    mock_restic.dump_popen.return_value = fake_popen
-    monkeypatch.setattr(services, "get_connector", MagicMock(return_value=_connector()))
-    monkeypatch.setattr(
-        services.subprocess, "run",
-        MagicMock(return_value=SimpleNamespace(returncode=0)),
-    )
-
-    services.run_restore("default", "latest", config=_config())
-
-    mock_restic.dump_popen.assert_called_once_with("new222", "default.sql")
-
-
-# --- run_prune ----------------------------------------------------------------
-
-def test_run_prune_applies_policy(mock_restic):
-    services.run_prune(config=_config(retention={"daily": 7, "weekly": 4}))
-    mock_restic.forget_policy.assert_called_once_with(
-        {"daily": 7, "weekly": 4}, prune=True, dry_run=False
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_prune_applies_retention_policy(restic, dry_run):
+    services.run_prune(config=_config(retention={"daily": 7}), dry_run=dry_run)
+    restic.forget_policy.assert_called_once_with(
+        {"daily": 7}, prune=not dry_run, dry_run=dry_run
     )
 
 
-def test_run_prune_dry_run_disables_prune(mock_restic):
-    services.run_prune(config=_config(retention={"daily": 7}), dry_run=True)
-    mock_restic.forget_policy.assert_called_once_with(
-        {"daily": 7}, prune=False, dry_run=True
-    )
-
-
-def test_run_prune_without_retention_raises(mock_restic):
+def test_prune_without_retention_raises(restic):
     with pytest.raises(ValueError, match="RETENTION"):
         services.run_prune(config=_config())
-    mock_restic.forget_policy.assert_not_called()
+    restic.forget_policy.assert_not_called()
 
 
-# --- remove / list / init --------------------------------------------------
-
-def test_remove_snapshot_calls_forget(mock_restic):
+def test_remove_snapshot_forgets_and_prunes(restic):
     services.remove_snapshot("abc123", config=_config())
-    mock_restic.forget_snapshot.assert_called_once_with("abc123", prune=True)
+    restic.forget_snapshot.assert_called_once_with("abc123", prune=True)
 
 
-def test_list_snapshots_returns_restic_snapshots(mock_restic):
-    snaps = [Snapshot(id="x", short_id="x", time="t")]
-    mock_restic.snapshots.return_value = snaps
-    assert services.list_snapshots(config=_config()) is snaps
+def test_list_snapshots_returns_restic_snapshots(restic):
+    restic.snapshots.return_value = [make_snapshot()]
+    assert services.list_snapshots(config=_config()) is restic.snapshots.return_value
 
 
-def test_run_init_calls_restic_init(mock_restic):
-    mock_restic.is_initialized.return_value = False
-    services.run_init(config=_config())
-    mock_restic.init.assert_called_once_with()
+# --- init -----------------------------------------------------------------------------------
+
+@pytest.mark.parametrize("version, initialized, calls_init, log", [
+    ((0, 19, 1), False, True, "Repository initialized."),
+    ((0, 19, 1), True, False, "Repository already initialized; skipping."),
+    (None, False, True, "Repository initialized."),  # unparsable version is let through
+])
+def test_init(restic, version, initialized, calls_init, log):
+    restic.version_info.return_value = version
+    restic.is_initialized.return_value = initialized
+    logs = []
+
+    services.run_init(config=_config(), log_callback=logs.append)
+
+    assert restic.init.called is calls_init
+    assert logs[-1] == log
 
 
-def test_run_init_skips_when_already_initialized(mock_restic):
-    mock_restic.is_initialized.return_value = True
-    messages = []
-    services.run_init(config=_config(), log_callback=messages.append)
-    mock_restic.init.assert_not_called()
-    assert messages == ["Repository already initialized; skipping."]
-
-
-# --- review fixes -------------------------------------------------------------------
-
-def test_run_init_rejects_too_old_restic(mock_restic):
-    mock_restic.version_info.return_value = (0, 15, 2)
+def test_init_rejects_too_old_restic(restic):
+    restic.version_info.return_value = (0, 15, 2)
     with pytest.raises(RuntimeError, match="restic 0.15.2 is too old.*0.16.0"):
         services.run_init(config=_config())
-    mock_restic.init.assert_not_called()
-
-
-def test_run_init_tolerates_unparsable_version(mock_restic):
-    mock_restic.version_info.return_value = None
-    mock_restic.is_initialized.return_value = False
-    services.run_init(config=_config())
-    mock_restic.init.assert_called_once_with()
-
-
-def _stub_restore(mock_restic, monkeypatch):
-    mock_restic.dump_popen.return_value = SimpleNamespace(
-        stdout=MagicMock(), returncode=0, wait=MagicMock(return_value=0)
-    )
-    monkeypatch.setattr(services, "get_connector", MagicMock(return_value=_connector()))
-    monkeypatch.setattr(
-        services.subprocess, "run",
-        MagicMock(return_value=SimpleNamespace(returncode=0)),
-    )
-
-
-def test_run_restore_latest_asks_restic_for_tagged_snapshots(mock_restic, monkeypatch):
-    mock_restic.snapshots.return_value = [
-        Snapshot(id="x1", short_id="x1", time="2026-07-14T10:00:00Z", tags=["db:default"]),
-    ]
-    _stub_restore(mock_restic, monkeypatch)
-    services.run_restore("default", "latest", config=_config())
-    mock_restic.snapshots.assert_called_once_with(tags=["db:default"])
-
-
-def test_run_restore_by_id_asks_restic_for_that_id(mock_restic, monkeypatch):
-    mock_restic.snapshots.return_value = [
-        Snapshot(id="abc123def456", short_id="abc123de", time="t", tags=["db:default"]),
-    ]
-    _stub_restore(mock_restic, monkeypatch)
-    services.run_restore("default", "abc1", config=_config())  # prefix, like restic
-    mock_restic.snapshots.assert_called_once_with(snapshot_ids=["abc1"])
-    mock_restic.dump_popen.assert_called_once_with("abc123def456", "default.sql")
-
-
-def test_run_restore_latest_compares_times_across_offsets(mock_restic, monkeypatch):
-    mock_restic.snapshots.return_value = [
-        # 10:30+02:00 == 08:30Z: older, even though it sorts later as text.
-        Snapshot(id="older", short_id="o", time="2026-07-14T10:30:00+02:00",
-                 tags=["db:default"]),
-        Snapshot(id="newer", short_id="n", time="2026-07-14T09:00:00Z",
-                 tags=["db:default"]),
-    ]
-    _stub_restore(mock_restic, monkeypatch)
-    services.run_restore("default", "latest", config=_config())
-    mock_restic.dump_popen.assert_called_once_with("newer", "default.sql")
+    restic.init.assert_not_called()
 
 
 def test_make_restic_passes_tuning_timeout(monkeypatch):
-    cls = MagicMock(name="Restic")
-    monkeypatch.setattr(services, "Restic", cls)
+    restic_cls = MagicMock()
+    monkeypatch.setattr(services, "Restic", restic_cls)
     services._make_restic(_config(tuning={"timeout": 3600}))
-    assert cls.call_args.kwargs["timeout"] == 3600
+    assert restic_cls.call_args.kwargs["timeout"] == 3600

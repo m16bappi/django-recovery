@@ -1,114 +1,49 @@
-"""End-to-end integration test: real restic binary + real sqlite round-trip.
+"""End-to-end test with a real restic binary and a real SQLite database.
 
-This is the release gate for Phase 2. It exercises the full backup/restore
-path against a real restic repository and a real on-disk SQLite database,
-using the actual ``restic`` executable (no mocking). SQLite dump/restore
-runs through the connector's Python scripts — no ``sqlite3`` CLI involved.
+Runs init, backup, list, restore, and remove against a throwaway repository.
+It uses a standalone SQLite file (not the test runner's database, which the
+connector's separate dump process could not see), so no ORM access is needed.
 
-It deliberately does NOT use Django's test-runner database (an in-memory
-``:memory:`` DB is invisible to the connector's separate dump process).
-Instead it builds a standalone sqlite file, points
-``settings.DATABASES['default']`` at it via ``override_settings``, and
-passes an explicit :class:`RecoveryConfig` to the service layer. No ORM
-access, so ``django_db`` is not needed.
-
-Skipped when the restic binary is unavailable; run explicitly with
-``pytest -m integration``.
+Skipped when restic is not on ``PATH``; select it with ``pytest -m integration``.
 """
 
-from __future__ import annotations
-
 import shutil
-import sqlite3
 
 import pytest
-from django.test import override_settings
 
 from django_recovery import services
-from django_recovery.conf import RecoveryConfig
 from django_recovery.storage import Repository
+from tests.factories import create_notes_db, make_config, read_notes
 
-
-def _restic_binary() -> str | None:
-    """Locate a real restic binary on ``PATH``, or ``None`` if unavailable."""
-    return shutil.which("restic")
-
-
-RESTIC_BIN = _restic_binary()
+RESTIC = shutil.which("restic")
 
 pytestmark = [
     pytest.mark.integration,
-    pytest.mark.skipif(RESTIC_BIN is None, reason="restic binary not available"),
+    pytest.mark.skipif(RESTIC is None, reason="restic binary not available"),
 ]
 
 
-def _note_count(db_path: str) -> int:
-    conn = sqlite3.connect(db_path)
-    try:
-        return conn.execute("SELECT count(*) FROM note").fetchone()[0]
-    finally:
-        conn.close()
-
-
-def _note_bodies(db_path: str) -> list[str]:
-    conn = sqlite3.connect(db_path)
-    try:
-        return [row[0] for row in conn.execute("SELECT body FROM note ORDER BY id")]
-    finally:
-        conn.close()
-
-
-def test_sqlite_backup_restore_roundtrip(tmp_path, monkeypatch):
-    repo = tmp_path / "repo"
-    db_path = tmp_path / "app.sqlite3"
-
-    config = RecoveryConfig(
-        repository=Repository(url=str(repo)),
+def test_sqlite_backup_restore_roundtrip(tmp_path, settings):
+    db = create_notes_db(tmp_path / "app.sqlite3", "hello-restic")
+    settings.DATABASES = {"default": {"ENGINE": "django.db.backends.sqlite3", "NAME": str(db)}}
+    config = make_config(
+        repository=Repository(url=str(tmp_path / "repo")),
         password="test-pass",
-        databases=["default"],
-        media=False,
         tags=["itest"],
-        binary=RESTIC_BIN,
+        binary=RESTIC,
     )
 
-    # -- seed a real sqlite database with one row -------------------------
-    conn = sqlite3.connect(str(db_path))
-    conn.execute("CREATE TABLE note(id INTEGER PRIMARY KEY, body TEXT)")
-    conn.execute("INSERT INTO note(body) VALUES (?)", ("hello-restic",))
-    conn.commit()
-    conn.close()
-    assert _note_bodies(str(db_path)) == ["hello-restic"]
+    services.run_init(config)
+    services.run_backup(config=config)
+    (snapshot,) = services.list_snapshots(config=config)
+    assert {"db:default", "itest"} <= set(snapshot.tags)
 
-    new_databases = {
-        "default": {
-            "ENGINE": "django.db.backends.sqlite3",
-            "NAME": str(db_path),
-        }
-    }
+    # Change the data so the restore has a visible effect.
+    db.unlink()
+    create_notes_db(db, "changed")
 
-    with override_settings(DATABASES=new_databases):
-        # -- init + backup ------------------------------------------------
-        services.run_init(config)
-        services.run_backup(config=config)
+    services.run_restore("default", "latest", config=config)
+    assert read_notes(db) == ["hello-restic"]
 
-        snapshots = services.list_snapshots(config=config)
-        assert len(snapshots) == 1
-        assert "db:default" in snapshots[0].tags
-        assert "itest" in snapshots[0].tags
-
-        # -- mutate the DB so restore has an observable effect ------------
-        conn = sqlite3.connect(str(db_path))
-        conn.execute("DELETE FROM note")
-        conn.commit()
-        conn.close()
-        assert _note_count(str(db_path)) == 0
-
-        # -- restore over the EXISTING, mutated database file -------------
-        services.run_restore("default", "latest", config=config)
-
-        assert db_path.exists()
-        assert _note_bodies(str(db_path)) == ["hello-restic"]
-
-        # -- remove the snapshot ------------------------------------------
-        services.remove_snapshot(snapshots[0].id, config=config)
-        assert services.list_snapshots(config=config) == []
+    services.remove_snapshot(snapshot.id, config=config)
+    assert services.list_snapshots(config=config) == []

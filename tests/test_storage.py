@@ -1,9 +1,9 @@
 """``RECOVERY['STORAGE']``: deriving the restic repository from a Django storage.
 
-django-storages and its provider SDKs are not test dependencies: storage
-classes are matched by dotted path along the MRO, so lightweight fakes whose
+django-storages and its provider SDKs are not test dependencies. Storage
+classes are matched by dotted path along the MRO, so small fakes whose
 ``__module__``/``__qualname__`` match the real classes exercise the mapping
-faithfully. One test against the real ``S3Storage`` runs when installed.
+faithfully. One test uses the real ``S3Storage`` when it is installed.
 """
 
 import os
@@ -11,334 +11,194 @@ import os
 import pytest
 from django.core.exceptions import ImproperlyConfigured
 from django.core.files.storage import FileSystemStorage
-from django.test import override_settings
 
 from django_recovery.conf import get_config
 from django_recovery.storage import Repository, repository_from_storage
 
 
-def _fake_storage(dotted: str, defaults: dict) -> type:
-    """A stand-in for a django-storages class at ``dotted`` with ``defaults``."""
+def fake_storage(dotted: str, **defaults) -> type:
+    """A stand-in for the storage class at ``dotted``, with default settings."""
     module, name = dotted.rsplit(".", 1)
 
     def __init__(self, **settings):
         self.__dict__.update({**defaults, **settings})
 
-    cls = type(name, (), {"__init__": __init__})
-    cls.__module__ = module
-    cls.__qualname__ = name
-    return cls
+    return type(name, (), {"__init__": __init__, "__module__": module, "__qualname__": name})
 
 
-FakeS3Storage = _fake_storage(
+FakeS3Storage = fake_storage(
     "storages.backends.s3.S3Storage",
-    {
-        "bucket_name": None,
-        "access_key": None,
-        "secret_key": None,
-        "security_token": None,
-        "session_profile": None,
-        "endpoint_url": None,
-        "region_name": None,
-        "location": "",
-        "querystring_auth": True,  # unrelated setting: must be ignored
-    },
+    bucket_name=None, access_key=None, secret_key=None, security_token=None,
+    session_profile=None, endpoint_url=None, region_name=None, location="",
+    use_ssl=True, querystring_auth=True,  # unrelated settings are ignored
 )
-
-FakeGCSStorage = _fake_storage(
+FakeGCSStorage = fake_storage(
     "storages.backends.gcloud.GoogleCloudStorage",
-    {
-        "bucket_name": None,
-        "project_id": None,
-        "credentials": None,
-        "custom_endpoint": None,
-        "location": "",
-    },
+    bucket_name=None, project_id=None, credentials=None, custom_endpoint=None, location="",
 )
-
-FakeAzureStorage = _fake_storage(
+FakeAzureStorage = fake_storage(
     "storages.backends.azure_storage.AzureStorage",
-    {
-        "account_name": None,
-        "account_key": None,
-        "sas_token": None,
-        "azure_container": None,
-        "azure_ssl": True,
-        "connection_string": None,
-        "token_credential": None,
-        "endpoint_suffix": "core.windows.net",
-        "location": "",
-    },
+    account_name=None, account_key=None, sas_token=None, azure_container=None,
+    azure_ssl=True, connection_string=None, token_credential=None,
+    endpoint_suffix="core.windows.net", location="",
 )
-
-FakeSFTPStorage = _fake_storage(
-    "storages.backends.sftpstorage.SFTPStorage",
-    {"host": None, "params": {}, "root_path": ""},
+FakeSFTPStorage = fake_storage(
+    "storages.backends.sftpstorage.SFTPStorage", host=None, params={}, root_path="",
 )
-
-FakeFTPStorage = _fake_storage("storages.backends.ftp.FTPStorage", {})
-
-
-# --- filesystem (Django built-in) ---------------------------------------------
-
-def test_filesystem_storage_maps_to_local_repo(tmp_path):
-    repo = tmp_path / "repo"
-    assert repository_from_storage(FileSystemStorage(location=repo)) == Repository(
-        url=os.path.abspath(repo)
-    )
+FakeFTPStorage = fake_storage("storages.backends.ftp.FTPStorage")
 
 
-def test_filesystem_storage_inside_media_root_rejected(tmp_path):
-    media = tmp_path / "media"
-    with override_settings(MEDIA_ROOT=str(media)):
-        # No location: FileSystemStorage defaults to MEDIA_ROOT itself.
-        with pytest.raises(ImproperlyConfigured, match="inside MEDIA_ROOT"):
-            repository_from_storage(FileSystemStorage())
-        with pytest.raises(ImproperlyConfigured, match="inside MEDIA_ROOT"):
-            repository_from_storage(FileSystemStorage(location=media / "restic"))
+class MediaStorage(FakeS3Storage):
+    """A project subclass: must map like its parent."""
 
 
-# --- s3 -----------------------------------------------------------------------
-
-def test_s3_default_endpoint_and_keys():
-    storage = FakeS3Storage(bucket_name="myapp-backups", access_key="AKIA",
-                            secret_key="shhh")
-    assert repository_from_storage(storage) == Repository(
-        url="s3:s3.amazonaws.com/myapp-backups",
-        env={"AWS_ACCESS_KEY_ID": "AKIA", "AWS_SECRET_ACCESS_KEY": "shhh"},
-    )
+S3_KEYS = {"access_key": "AKIA", "secret_key": "shhh"}
+S3_KEY_ENV = {"AWS_ACCESS_KEY_ID": "AKIA", "AWS_SECRET_ACCESS_KEY": "shhh"}
+AZ = {"account_name": "acct", "azure_container": "c"}
 
 
-def test_s3_custom_endpoint_location_region_token():
-    storage = FakeS3Storage(
-        bucket_name="b",
-        access_key="a",
-        secret_key="s",
-        security_token="tok",
-        endpoint_url="https://accountid.r2.cloudflarestorage.com/",
-        region_name="auto",
-        location="prod/",
-    )
-    repo = repository_from_storage(storage)
-    assert repo.url == "s3:accountid.r2.cloudflarestorage.com/b/prod"
-    assert repo.env["AWS_DEFAULT_REGION"] == "auto"
-    assert repo.env["AWS_SESSION_TOKEN"] == "tok"
+# --- supported storages --------------------------------------------------------
 
-
-def test_s3_http_endpoint_scheme_preserved():
-    storage = FakeS3Storage(bucket_name="b", endpoint_url="http://minio:9000/")
-    assert repository_from_storage(storage).url == "s3:http://minio:9000/b"
-
-
-def test_s3_session_profile_maps_to_aws_profile():
-    storage = FakeS3Storage(bucket_name="b", session_profile="backups")
-    assert repository_from_storage(storage).env == {"AWS_PROFILE": "backups"}
-
-
-def test_s3_iam_role_no_keys():
-    assert repository_from_storage(FakeS3Storage(bucket_name="b")).env == {}
-
-
-def test_s3_single_key_rejected():
-    storage = FakeS3Storage(bucket_name="b", access_key="a")
-    with pytest.raises(ImproperlyConfigured, match="access_key and secret_key"):
-        repository_from_storage(storage)
-
-
-def test_s3_bucket_required():
-    with pytest.raises(ImproperlyConfigured, match="bucket_name"):
-        repository_from_storage(FakeS3Storage())
-
-
-def test_subclass_of_supported_storage_matches():
-    class MediaStorage(FakeS3Storage):
-        pass
-
-    assert repository_from_storage(MediaStorage(bucket_name="b")).url.startswith("s3:")
-
-
-# --- gcs ----------------------------------------------------------------------
-
-def test_gcs_adc():
-    storage = FakeGCSStorage(bucket_name="b", project_id="p", location="prod")
-    assert repository_from_storage(storage) == Repository(
-        url="gs:b:/prod", env={"GOOGLE_PROJECT_ID": "p"}
-    )
-
-
-def test_gcs_no_location():
-    assert repository_from_storage(FakeGCSStorage(bucket_name="b")).url == "gs:b:/"
-
-
-def test_gcs_credentials_object_rejected_without_key_file(monkeypatch):
-    monkeypatch.delenv("GOOGLE_APPLICATION_CREDENTIALS", raising=False)
-    storage = FakeGCSStorage(bucket_name="b", credentials=object())
-    with pytest.raises(ImproperlyConfigured, match="GOOGLE_APPLICATION_CREDENTIALS"):
-        repository_from_storage(storage)
+@pytest.mark.parametrize("storage, url, env", [
+    # S3
+    pytest.param(FakeS3Storage(bucket_name="b", **S3_KEYS),
+                 "s3:s3.amazonaws.com/b", S3_KEY_ENV, id="s3-defaults"),
+    pytest.param(FakeS3Storage(bucket_name="b", endpoint_url="https://r2.example.com/",
+                               location="/prod/", region_name="auto", security_token="tok",
+                               **S3_KEYS),
+                 "s3:r2.example.com/b/prod",
+                 {**S3_KEY_ENV, "AWS_DEFAULT_REGION": "auto", "AWS_SESSION_TOKEN": "tok"},
+                 id="s3-endpoint-location-region-token"),
+    pytest.param(FakeS3Storage(bucket_name="b", endpoint_url="http://minio:9000/"),
+                 "s3:http://minio:9000/b", {}, id="s3-http-kept"),
+    pytest.param(FakeS3Storage(bucket_name="b", endpoint_url="minio:9000", use_ssl=False),
+                 "s3:http://minio:9000/b", {}, id="s3-use_ssl-false"),
+    pytest.param(FakeS3Storage(bucket_name="b", endpoint_url="https://m:9000", use_ssl=False),
+                 "s3:m:9000/b", {}, id="s3-use_ssl-false-explicit-https"),
+    pytest.param(FakeS3Storage(bucket_name="b", session_profile="backups"),
+                 "s3:s3.amazonaws.com/b", {"AWS_PROFILE": "backups"}, id="s3-profile"),
+    pytest.param(FakeS3Storage(bucket_name="b"),
+                 "s3:s3.amazonaws.com/b", {}, id="s3-iam-role"),
+    pytest.param(MediaStorage(bucket_name="b"),
+                 "s3:s3.amazonaws.com/b", {}, id="s3-subclass"),
+    # Google Cloud Storage
+    pytest.param(FakeGCSStorage(bucket_name="b", project_id="p", location="prod"),
+                 "gs:b:/prod", {"GOOGLE_PROJECT_ID": "p"}, id="gcs"),
+    pytest.param(FakeGCSStorage(bucket_name="b"), "gs:b:/", {}, id="gcs-no-location"),
+    # Azure (the default public-cloud suffix is not forwarded)
+    pytest.param(FakeAzureStorage(account_key="key", location="x", **AZ),
+                 "azure:c:/x", {"AZURE_ACCOUNT_NAME": "acct", "AZURE_ACCOUNT_KEY": "key"},
+                 id="azure-key"),
+    pytest.param(FakeAzureStorage(sas_token="sas", endpoint_suffix="core.chinacloudapi.cn", **AZ),
+                 "azure:c:/",
+                 {"AZURE_ACCOUNT_NAME": "acct", "AZURE_ACCOUNT_SAS": "sas",
+                  "AZURE_ENDPOINT_SUFFIX": "core.chinacloudapi.cn"},
+                 id="azure-sas-sovereign-cloud"),
+    # SFTP ("//" after host:port means an absolute path)
+    pytest.param(FakeSFTPStorage(host="example.com", root_path="/srv/restic",
+                                 params={"username": "deploy"}),
+                 "sftp:deploy@example.com:/srv/restic", {}, id="sftp"),
+    pytest.param(FakeSFTPStorage(host="h", root_path="/srv/restic",
+                                 params={"username": "u", "port": 2222}),
+                 "sftp://u@h:2222//srv/restic", {}, id="sftp-port-absolute"),
+    pytest.param(FakeSFTPStorage(host="h", root_path="backups", params={"port": 2222}),
+                 "sftp://h:2222/backups", {}, id="sftp-port-relative"),
+])
+def test_repository(storage, url, env):
+    assert repository_from_storage(storage) == Repository(url=url, env=env)
 
 
 def test_gcs_credentials_object_allowed_with_key_file_env(monkeypatch):
-    # restic inherits GOOGLE_APPLICATION_CREDENTIALS from the environment.
+    # restic reads the key file from GOOGLE_APPLICATION_CREDENTIALS itself.
     monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS", "/k.json")
     storage = FakeGCSStorage(bucket_name="b", credentials=object())
     assert repository_from_storage(storage).url == "gs:b:/"
 
 
-def test_gcs_custom_endpoint_rejected():
-    storage = FakeGCSStorage(bucket_name="b", custom_endpoint="https://cdn")
-    with pytest.raises(ImproperlyConfigured, match="custom_endpoint"):
+def test_filesystem_storage_maps_to_local_repo(tmp_path):
+    storage = FileSystemStorage(location=tmp_path / "repo")
+    assert repository_from_storage(storage) == Repository(url=os.path.abspath(tmp_path / "repo"))
+
+
+# --- rejected configurations -----------------------------------------------------------
+
+@pytest.mark.parametrize("storage, match", [
+    pytest.param(FakeS3Storage(), "bucket_name", id="s3-no-bucket"),
+    pytest.param(FakeS3Storage(bucket_name="b", access_key="a"),
+                 "access_key and secret_key", id="s3-one-key"),
+    pytest.param(FakeGCSStorage(bucket_name="b", custom_endpoint="https://cdn"),
+                 "custom_endpoint", id="gcs-custom-endpoint"),
+    pytest.param(FakeAzureStorage(**AZ), "account_key or sas_token", id="azure-no-auth"),
+    pytest.param(FakeAzureStorage(account_key="k", sas_token="s", **AZ),
+                 "account_key or sas_token", id="azure-both-auth"),
+    pytest.param(FakeAzureStorage(account_name="a", account_key="k"),
+                 "azure_container", id="azure-no-container"),
+    *[pytest.param(FakeAzureStorage(account_key="k", **AZ, **{key: value}), key,
+                   id=f"azure-{key}")
+      for key, value in (("connection_string", "AccountName=a"),
+                         ("token_credential", object()), ("azure_ssl", False))],
+    pytest.param(FakeSFTPStorage(host="h"), "root_path", id="sftp-no-root-path"),
+    *[pytest.param(FakeSFTPStorage(host="h", root_path="/r", params={key: "x"}), key,
+                   id=f"sftp-{key}")
+      for key in ("password", "key_filename", "pkey")],
+    pytest.param(FakeFTPStorage(), "no restic equivalent", id="unsupported-class"),
+])
+def test_rejected(storage, match):
+    with pytest.raises(ImproperlyConfigured, match=match):
         repository_from_storage(storage)
 
 
-# --- azure --------------------------------------------------------------------
-
-def test_azure_account_key():
-    storage = FakeAzureStorage(
-        account_name="acct", account_key="key", azure_container="c", location="x"
-    )
-    # default public-cloud suffix is not forwarded
-    assert repository_from_storage(storage) == Repository(
-        url="azure:c:/x",
-        env={"AZURE_ACCOUNT_NAME": "acct", "AZURE_ACCOUNT_KEY": "key"},
-    )
+def test_gcs_credentials_object_rejected_without_key_file(monkeypatch):
+    monkeypatch.delenv("GOOGLE_APPLICATION_CREDENTIALS", raising=False)
+    with pytest.raises(ImproperlyConfigured, match="GOOGLE_APPLICATION_CREDENTIALS"):
+        repository_from_storage(FakeGCSStorage(bucket_name="b", credentials=object()))
 
 
-def test_azure_sas_token_and_sovereign_suffix():
-    storage = FakeAzureStorage(
-        account_name="a", sas_token="sas", azure_container="c",
-        endpoint_suffix="core.chinacloudapi.cn",
-    )
-    env = repository_from_storage(storage).env
-    assert env["AZURE_ACCOUNT_SAS"] == "sas"
-    assert "AZURE_ACCOUNT_KEY" not in env
-    assert env["AZURE_ENDPOINT_SUFFIX"] == "core.chinacloudapi.cn"
-
-
-@pytest.mark.parametrize("auth", [{}, {"account_key": "k", "sas_token": "s"}])
-def test_azure_needs_exactly_one_of_key_or_sas(auth):
-    storage = FakeAzureStorage(account_name="a", azure_container="c", **auth)
-    with pytest.raises(ImproperlyConfigured, match="account_key or sas_token"):
+@pytest.mark.parametrize("location", [None, "restic"])
+def test_filesystem_storage_inside_media_root_rejected(settings, tmp_path, location):
+    media = tmp_path / "media"
+    settings.MEDIA_ROOT = str(media)
+    # No location: FileSystemStorage defaults to MEDIA_ROOT itself.
+    storage = FileSystemStorage(location=media / location) if location else FileSystemStorage()
+    with pytest.raises(ImproperlyConfigured, match="inside MEDIA_ROOT"):
         repository_from_storage(storage)
 
 
-def test_azure_container_required():
-    storage = FakeAzureStorage(account_name="a", account_key="k")
-    with pytest.raises(ImproperlyConfigured, match="azure_container"):
-        repository_from_storage(storage)
+# --- through get_config() -------------------------------------------------------------
 
-
-@pytest.mark.parametrize(
-    "setting, value",
-    [
-        ("connection_string", "AccountName=a;AccountKey=k"),
-        ("token_credential", object()),
-        ("azure_ssl", False),
-    ],
-)
-def test_azure_unmappable_settings_rejected(setting, value):
-    storage = FakeAzureStorage(
-        account_name="a", account_key="k", azure_container="c", **{setting: value}
-    )
-    with pytest.raises(ImproperlyConfigured, match=setting):
-        repository_from_storage(storage)
-
-
-# --- sftp ---------------------------------------------------------------------
-
-def test_sftp_without_port():
-    storage = FakeSFTPStorage(host="backup.example.com", root_path="/srv/restic",
-                              params={"username": "deploy"})
-    assert repository_from_storage(storage) == Repository(
-        url="sftp:deploy@backup.example.com:/srv/restic"
-    )
-
-
-def test_sftp_port_keeps_absolute_path():
-    # restic URL form: "//" after host:port means an absolute path.
-    storage = FakeSFTPStorage(host="h", root_path="/srv/restic",
-                              params={"username": "u", "port": 2222})
-    assert repository_from_storage(storage).url == "sftp://u@h:2222//srv/restic"
-
-
-def test_sftp_port_relative_path():
-    storage = FakeSFTPStorage(host="h", root_path="backups", params={"port": 2222})
-    assert repository_from_storage(storage).url == "sftp://h:2222/backups"
-
-
-def test_sftp_host_and_root_path_required():
-    with pytest.raises(ImproperlyConfigured, match="root_path"):
-        repository_from_storage(FakeSFTPStorage(host="h"))
-
-
-@pytest.mark.parametrize("key", ["password", "key_filename", "pkey"])
-def test_sftp_non_ssh_auth_rejected(key):
-    storage = FakeSFTPStorage(host="h", root_path="/r", params={key: "x"})
-    with pytest.raises(ImproperlyConfigured, match=key):
-        repository_from_storage(storage)
-
-
-# --- unsupported --------------------------------------------------------------
-
-def test_unsupported_storage_class_rejected():
-    with pytest.raises(ImproperlyConfigured, match="no restic equivalent"):
-        repository_from_storage(FakeFTPStorage())
-
-
-# --- conf integration ---------------------------------------------------------
-
-_STORAGES = {
-    "backups": {
+def test_get_config_uses_the_named_storage(settings, recovery):
+    settings.STORAGES = {"backups": {
         "BACKEND": "tests.test_storage.FakeS3Storage",
-        "OPTIONS": {"bucket_name": "myapp-backups", "access_key": "a",
-                    "secret_key": "s", "location": "restic"},
-    },
-}
-
-
-def test_get_config_storage_alias():
-    with override_settings(STORAGES=_STORAGES,
-                           RECOVERY={"STORAGE": "backups", "PASSWORD": "pw"}):
-        config = get_config()
+        "OPTIONS": {"bucket_name": "myapp-backups", "location": "restic", **S3_KEYS},
+    }}
+    recovery(STORAGE="backups", PASSWORD="pw")
+    config = get_config()
     assert config.repository.url == "s3:s3.amazonaws.com/myapp-backups/restic"
-    assert config.restic_env() == {
-        "AWS_ACCESS_KEY_ID": "a",
-        "AWS_SECRET_ACCESS_KEY": "s",
-        "RESTIC_PASSWORD": "pw",
-    }
+    assert config.restic_env() == {**S3_KEY_ENV, "RESTIC_PASSWORD": "pw"}
 
 
-def test_get_config_unknown_storage_alias():
-    with override_settings(STORAGES=_STORAGES, RECOVERY={"STORAGE": "nope"}):
-        with pytest.raises(ImproperlyConfigured, match="'nope'"):
-            get_config()
+@pytest.mark.parametrize("storages, alias, match", [
+    ({}, "nope", "'nope' could not be loaded"),
+    ({"broken": {"BACKEND": "storages.backends.does_not_exist.Nope"}}, "broken",
+     "'broken' could not be loaded"),
+])
+def test_get_config_storage_that_cannot_load(settings, recovery, storages, alias, match):
+    settings.STORAGES = storages
+    recovery(STORAGE=alias)
+    with pytest.raises(ImproperlyConfigured, match=match):
+        get_config()
 
 
-def test_get_config_storage_import_error():
-    storages = {"broken": {"BACKEND": "storages.backends.does_not_exist.Nope"}}
-    with override_settings(STORAGES=storages, RECOVERY={"STORAGE": "broken"}):
-        with pytest.raises(ImproperlyConfigured, match="could not be loaded"):
-            get_config()
+# --- real django-storages ----------------------------------------------------------------
 
-
-# --- real django-storages -----------------------------------------------------
-
-def test_real_s3storage_resolves_global_aws_settings():
+def test_real_s3storage_resolves_global_aws_settings(settings):
     pytest.importorskip("boto3")
     s3 = pytest.importorskip("storages.backends.s3")
-    with override_settings(AWS_ACCESS_KEY_ID="AKIA", AWS_SECRET_ACCESS_KEY="shhh",
-                           AWS_STORAGE_BUCKET_NAME="media", AWS_LOCATION="restic",
-                           AWS_S3_ENDPOINT_URL="http://minio:9000"):
-        repo = repository_from_storage(s3.S3Storage())
+    settings.AWS_ACCESS_KEY_ID = "AKIA"
+    settings.AWS_SECRET_ACCESS_KEY = "shhh"
+    settings.AWS_STORAGE_BUCKET_NAME = "media"
+    settings.AWS_LOCATION = "restic"
+    settings.AWS_S3_ENDPOINT_URL = "http://minio:9000"
+    repo = repository_from_storage(s3.S3Storage())
     assert repo.url == "s3:http://minio:9000/media/restic"
     assert repo.env["AWS_ACCESS_KEY_ID"] == "AKIA"
-
-
-def test_s3_use_ssl_false_without_scheme_uses_http():
-    storage = FakeS3Storage(bucket_name="b", endpoint_url="minio:9000", use_ssl=False)
-    assert repository_from_storage(storage).url == "s3:http://minio:9000/b"
-
-
-def test_s3_use_ssl_false_keeps_explicit_scheme():
-    storage = FakeS3Storage(bucket_name="b", endpoint_url="https://minio:9000",
-                            use_ssl=False)
-    assert repository_from_storage(storage).url == "s3:minio:9000/b"

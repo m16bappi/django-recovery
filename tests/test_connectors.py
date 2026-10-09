@@ -1,283 +1,152 @@
 """Tests for the per-engine database connectors.
 
-These tests need no real database: they assert the exact command-line lists
-and environment dicts each connector constructs from a ``DATABASES``-style
-settings dict. Connectors are constructed directly where possible; the
-:func:`get_connector` factory is exercised via ``override_settings``.
+Command-building tests need no database: they compare the exact argv and env
+each connector builds from a ``DATABASES``-style dict. The SQLite scripts are
+also run for real against temporary files.
 """
 
-import sqlite3
 import subprocess
 import sys
 
 import pytest
-from django.test import override_settings
 
 from django_recovery.connectors import MySQL, Postgres, SQLite, get_connector
 from django_recovery.connectors import sqlite as sqlite_mod
+from tests.factories import create_notes_db, read_notes
 
-# --- Postgres --------------------------------------------------------------
+PG = {"NAME": "appdb", "USER": "app", "PASSWORD": "secret",
+      "HOST": "localhost", "PORT": "5432"}
+MY = {"NAME": "appdb", "USER": "app", "PASSWORD": "secret",
+      "HOST": "db.internal", "PORT": "3306"}
+LOCAL = {"HOST": "", "PORT": "", "PASSWORD": ""}
+SOCKET = {"HOST": "/var/run/mysqld/mysqld.sock"}
 
-def test_postgres_dump_command():
-    c = Postgres("default", {
-        "NAME": "appdb", "USER": "app", "PASSWORD": "secret",
-        "HOST": "localhost", "PORT": "5432",
-    })
-    assert c.dump_command() == [
-        "pg_dump", "--clean", "--if-exists", "--no-owner",
-        "-h", "localhost", "-p", "5432", "-U", "app", "-d", "appdb",
-    ]
-
-
-def test_postgres_restore_command():
-    c = Postgres("default", {
-        "NAME": "appdb", "USER": "app", "PASSWORD": "secret",
-        "HOST": "localhost", "PORT": "5432",
-    })
-    assert c.restore_command() == [
-        "psql", "-h", "localhost", "-p", "5432", "-U", "app",
-        "-d", "appdb", "-v", "ON_ERROR_STOP=1", "--single-transaction",
-    ]
+PG_DUMP = ["pg_dump", "--clean", "--if-exists", "--no-owner"]
+PSQL_TAIL = ["-d", "appdb", "-v", "ON_ERROR_STOP=1", "--single-transaction"]
+MYSQLDUMP = ["mysqldump", "--single-transaction", "--routines"]
 
 
-def test_postgres_extra_env():
-    c = Postgres("default", {
-        "NAME": "appdb", "USER": "app", "PASSWORD": "secret",
-        "HOST": "localhost", "PORT": "5432",
-    })
-    assert c.extra_env() == {"PGPASSWORD": "secret"}
+@pytest.mark.parametrize("connector, dump, restore", [
+    pytest.param(
+        Postgres("default", PG),
+        [*PG_DUMP, "-h", "localhost", "-p", "5432", "-U", "app", "-d", "appdb"],
+        ["psql", "-h", "localhost", "-p", "5432", "-U", "app", *PSQL_TAIL],
+        id="postgres",
+    ),
+    pytest.param(
+        Postgres("default", {**PG, **LOCAL}),
+        [*PG_DUMP, "-U", "app", "-d", "appdb"],
+        ["psql", "-U", "app", *PSQL_TAIL],
+        id="postgres-no-host-port",
+    ),
+    pytest.param(
+        MySQL("default", MY),
+        [*MYSQLDUMP, "-h", "db.internal", "-P", "3306", "-u", "app", "appdb"],
+        ["mysql", "-h", "db.internal", "-P", "3306", "-u", "app", "appdb"],
+        id="mysql",
+    ),
+    pytest.param(
+        MySQL("default", {**MY, **LOCAL}),
+        [*MYSQLDUMP, "-u", "app", "appdb"],
+        ["mysql", "-u", "app", "appdb"],
+        id="mysql-no-host-port",
+    ),
+    pytest.param(
+        MySQL("default", {**MY, **SOCKET}),  # Django: HOST starting with "/" is a socket
+        [*MYSQLDUMP, "--socket", SOCKET["HOST"], "-u", "app", "appdb"],
+        ["mysql", "--socket", SOCKET["HOST"], "-u", "app", "appdb"],
+        id="mysql-unix-socket",
+    ),
+    pytest.param(
+        SQLite("default", {"NAME": "/path/db.sqlite3"}),
+        [sys.executable, "-c", sqlite_mod._DUMP_SCRIPT, "/path/db.sqlite3"],
+        [sys.executable, "-c", sqlite_mod._RESTORE_SCRIPT, "/path/db.sqlite3"],
+        id="sqlite",
+    ),
+])
+def test_commands(connector, dump, restore):
+    assert connector.dump_command() == dump
+    assert connector.restore_command() == restore
 
 
-def test_postgres_no_password_no_env():
-    c = Postgres("default", {
-        "NAME": "appdb", "USER": "app", "PASSWORD": "",
-        "HOST": "localhost", "PORT": "5432",
-    })
-    assert c.extra_env() == {}
+@pytest.mark.parametrize("connector, env", [
+    pytest.param(Postgres("default", PG), {"PGPASSWORD": "secret"}, id="postgres"),
+    pytest.param(Postgres("default", {**PG, **LOCAL}), {}, id="postgres-no-password"),
+    pytest.param(
+        Postgres("default", {**PG, "OPTIONS": {
+            "sslmode": "verify-full", "sslrootcert": "/etc/ssl/rds.pem",
+            "connect_timeout": 10, "isolation_level": 1,  # Django-only: ignored
+        }}),
+        {"PGSSLMODE": "verify-full", "PGSSLROOTCERT": "/etc/ssl/rds.pem",
+         "PGCONNECT_TIMEOUT": "10", "PGPASSWORD": "secret"},
+        id="postgres-libpq-options",
+    ),
+    pytest.param(MySQL("default", MY), {"MYSQL_PWD": "secret"}, id="mysql"),
+    pytest.param(MySQL("default", {**MY, **LOCAL}), {}, id="mysql-no-password"),
+    pytest.param(SQLite("default", {"NAME": "x"}), {}, id="sqlite"),
+])
+def test_extra_env(connector, env):
+    assert connector.extra_env() == env
 
 
-def test_postgres_omits_host_and_port_when_empty():
-    c = Postgres("default", {
-        "NAME": "appdb", "USER": "app", "PASSWORD": "",
-        "HOST": "", "PORT": "",
-    })
-    assert c.dump_command() == [
-        "pg_dump", "--clean", "--if-exists", "--no-owner",
-        "-U", "app", "-d", "appdb",
-    ]
-    assert c.restore_command() == [
-        "psql", "-U", "app", "-d", "appdb", "-v", "ON_ERROR_STOP=1",
-        "--single-transaction",
-    ]
+@pytest.mark.parametrize("connector, filename", [
+    (Postgres("analytics", PG), "analytics.sql"),
+    (SQLite("default", {"NAME": "x"}), "default.sqlite3"),  # raw file, not SQL
+])
+def test_stdin_filename(connector, filename):
+    assert connector.stdin_filename == filename
 
 
-# --- MySQL -----------------------------------------------------------------
-
-def test_mysql_dump_command():
-    c = MySQL("default", {
-        "NAME": "appdb", "USER": "app", "PASSWORD": "secret",
-        "HOST": "db.internal", "PORT": "3306",
-    })
-    assert c.dump_command() == [
-        "mysqldump", "--single-transaction", "--routines",
-        "-h", "db.internal", "-P", "3306", "-u", "app", "appdb",
-    ]
-
-
-def test_mysql_restore_command():
-    c = MySQL("default", {
-        "NAME": "appdb", "USER": "app", "PASSWORD": "secret",
-        "HOST": "db.internal", "PORT": "3306",
-    })
-    assert c.restore_command() == [
-        "mysql", "-h", "db.internal", "-P", "3306", "-u", "app", "appdb",
-    ]
-
-
-def test_mysql_extra_env():
-    c = MySQL("default", {
-        "NAME": "appdb", "USER": "app", "PASSWORD": "secret",
-        "HOST": "db.internal", "PORT": "3306",
-    })
-    assert c.extra_env() == {"MYSQL_PWD": "secret"}
-
-
-def test_mysql_no_password_no_env():
-    c = MySQL("default", {
-        "NAME": "appdb", "USER": "app", "PASSWORD": "",
-        "HOST": "", "PORT": "",
-    })
-    assert c.extra_env() == {}
-
-
-def test_mysql_omits_host_and_port_when_empty():
-    c = MySQL("default", {
-        "NAME": "appdb", "USER": "app", "PASSWORD": "",
-        "HOST": "", "PORT": "",
-    })
-    assert c.dump_command() == [
-        "mysqldump", "--single-transaction", "--routines", "-u", "app", "appdb",
-    ]
-    assert c.restore_command() == ["mysql", "-u", "app", "appdb"]
-
-
-# --- SQLite ----------------------------------------------------------------
-
-def test_sqlite_dump_command_runs_python_backup_script():
-    c = SQLite("default", {"NAME": "/path/db.sqlite3"})
-    assert c.dump_command() == [
-        sys.executable, "-c", sqlite_mod._DUMP_SCRIPT, "/path/db.sqlite3",
-    ]
-
-
-def test_sqlite_restore_command_runs_python_backup_script():
-    c = SQLite("default", {"NAME": "/path/db.sqlite3"})
-    assert c.restore_command() == [
-        sys.executable, "-c", sqlite_mod._RESTORE_SCRIPT, "/path/db.sqlite3",
-    ]
-
-
-def test_sqlite_extra_env_empty():
-    c = SQLite("default", {"NAME": "/path/db.sqlite3"})
-    assert c.extra_env() == {}
-
+# --- SQLite scripts, run for real ---------------------------------------------------
 
 def test_sqlite_dump_restore_roundtrip(tmp_path):
-    """Run the real dump/restore scripts: raw file out, overwrite-restore in."""
-    src_db = tmp_path / "src.sqlite3"
-    conn = sqlite3.connect(str(src_db))
-    conn.execute("CREATE TABLE note(id INTEGER PRIMARY KEY, body TEXT)")
-    conn.execute("INSERT INTO note(body) VALUES ('hello-file')")
-    conn.commit()
-    conn.close()
-
+    src = create_notes_db(tmp_path / "src.sqlite3", "hello-file")
     dumped = subprocess.run(
-        SQLite("default", {"NAME": str(src_db)}).dump_command(),
+        SQLite("default", {"NAME": str(src)}).dump_command(),
         capture_output=True, check=True,
     ).stdout
-    # The stream is the raw database file, not SQL text.
-    assert dumped.startswith(b"SQLite format 3\x00")
+    assert dumped.startswith(b"SQLite format 3\x00")  # raw database file, not SQL
 
-    # Restore over an EXISTING database with different content.
-    dst_db = tmp_path / "dst.sqlite3"
-    conn = sqlite3.connect(str(dst_db))
-    conn.execute("CREATE TABLE other(x INTEGER)")
-    conn.commit()
-    conn.close()
-
+    # Restore over an existing database with different content.
+    dst = tmp_path / "dst.sqlite3"
+    create_notes_db(dst, "to-be-replaced")
     subprocess.run(
-        SQLite("default", {"NAME": str(dst_db)}).restore_command(),
+        SQLite("default", {"NAME": str(dst)}).restore_command(),
         input=dumped, check=True,
     )
-    conn = sqlite3.connect(str(dst_db))
-    try:
-        rows = [r[0] for r in conn.execute("SELECT body FROM note")]
-    finally:
-        conn.close()
-    assert rows == ["hello-file"]
+    assert read_notes(dst) == ["hello-file"]
 
 
 def test_sqlite_dump_fails_on_missing_database(tmp_path):
-    missing = tmp_path / "nope.sqlite3"
     proc = subprocess.run(
-        SQLite("default", {"NAME": str(missing)}).dump_command(),
+        SQLite("default", {"NAME": str(tmp_path / "nope.sqlite3")}).dump_command(),
         capture_output=True, text=True,
     )
     assert proc.returncode != 0
     assert "sqlite database not found" in proc.stderr
 
 
-# --- stdin_filename --------------------------------------------------------
+# --- get_connector ---------------------------------------------------------------------
 
-def test_stdin_filename_sqlite_is_raw_file():
-    c = SQLite("default", {"NAME": "/path/db.sqlite3"})
-    assert c.stdin_filename == "default.sqlite3"
-
-
-def test_stdin_filename_uses_alias():
-    c = Postgres("analytics", {"NAME": "appdb", "USER": "", "PASSWORD": "",
-                               "HOST": "", "PORT": ""})
-    assert c.stdin_filename == "analytics.sql"
-
-
-# --- get_connector factory -------------------------------------------------
-
-@override_settings(DATABASES={"default": {
-    "ENGINE": "django.db.backends.postgresql",
-    "NAME": "appdb", "USER": "app", "PASSWORD": "secret",
-    "HOST": "localhost", "PORT": "5432",
-}})
-def test_get_connector_postgresql():
-    c = get_connector("default")
-    assert isinstance(c, Postgres)
-    assert c.alias == "default"
+@pytest.mark.parametrize("engine, connector_cls", [
+    ("django.db.backends.postgresql", Postgres),
+    ("django.contrib.gis.db.backends.postgis", Postgres),
+    ("django.db.backends.mysql", MySQL),
+    ("django.db.backends.sqlite3", SQLite),
+])
+def test_get_connector_picks_class_by_engine(settings, engine, connector_cls):
+    settings.DATABASES = {"default": {"ENGINE": engine, **PG}}
+    connector = get_connector("default")
+    assert type(connector) is connector_cls
+    assert connector.alias == "default"
 
 
-@override_settings(DATABASES={"default": {
-    "ENGINE": "django.contrib.gis.db.backends.postgis",
-    "NAME": "geodb", "USER": "", "PASSWORD": "", "HOST": "", "PORT": "",
-}})
-def test_get_connector_postgis_maps_to_postgres():
-    assert isinstance(get_connector("default"), Postgres)
-
-
-@override_settings(DATABASES={"default": {
-    "ENGINE": "django.db.backends.mysql",
-    "NAME": "appdb", "USER": "", "PASSWORD": "", "HOST": "", "PORT": "",
-}})
-def test_get_connector_mysql():
-    assert isinstance(get_connector("default"), MySQL)
-
-
-@override_settings(DATABASES={"default": {
-    "ENGINE": "django.db.backends.sqlite3", "NAME": "/path/db.sqlite3",
-}})
-def test_get_connector_sqlite():
-    assert isinstance(get_connector("default"), SQLite)
-
-
-@override_settings(DATABASES={"default": {
-    "ENGINE": "django.db.backends.oracle",
-    "NAME": "appdb", "USER": "", "PASSWORD": "", "HOST": "", "PORT": "",
-}})
-def test_get_connector_unknown_engine_raises():
-    with pytest.raises(NotImplementedError) as exc:
+def test_get_connector_unknown_engine_raises(settings):
+    settings.DATABASES = {"default": {"ENGINE": "django.db.backends.oracle", **PG}}
+    with pytest.raises(NotImplementedError, match="django.db.backends.oracle"):
         get_connector("default")
-    assert "django.db.backends.oracle" in str(exc.value)
 
 
-def test_get_connector_unknown_alias_raises_value_error():
+def test_get_connector_unknown_alias_lists_valid_ones():
     with pytest.raises(ValueError, match="unknown database 'typo'.*default"):
         get_connector("typo")
-
-
-def test_mysql_unix_socket_host_uses_socket_flag():
-    c = MySQL("default", {
-        "NAME": "appdb", "USER": "app", "PASSWORD": "",
-        "HOST": "/var/run/mysqld/mysqld.sock", "PORT": "3306",
-    })
-    assert c.dump_command() == [
-        "mysqldump", "--single-transaction", "--routines",
-        "--socket", "/var/run/mysqld/mysqld.sock", "-u", "app", "appdb",
-    ]
-    assert c.restore_command() == [
-        "mysql", "--socket", "/var/run/mysqld/mysqld.sock", "-u", "app", "appdb",
-    ]
-
-
-def test_postgres_libpq_options_become_env():
-    c = Postgres("default", {
-        "NAME": "appdb", "USER": "app", "PASSWORD": "secret",
-        "OPTIONS": {
-            "sslmode": "verify-full",
-            "sslrootcert": "/etc/ssl/rds.pem",
-            "connect_timeout": 10,
-            "isolation_level": 1,  # Django-only: ignored
-        },
-    })
-    assert c.extra_env() == {
-        "PGSSLMODE": "verify-full",
-        "PGSSLROOTCERT": "/etc/ssl/rds.pem",
-        "PGCONNECT_TIMEOUT": "10",
-        "PGPASSWORD": "secret",
-    }

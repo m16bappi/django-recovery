@@ -1,18 +1,12 @@
 """Tests for the ``recovery`` management command.
 
-The command is a thin argparse wrapper over :mod:`django_recovery.services`;
-here every service function is patched at the module level (the command imports
-the ``services`` module and calls attributes on it, so patching
-``django_recovery.services.<fn>`` is what the command sees). Confirmation
-prompts are driven by monkeypatching ``builtins.input``. No restic binary,
-database, or real snapshot is touched.
+The command is a thin argparse layer over :mod:`django_recovery.services`, so
+each service function is replaced with a mock and confirmation prompts are
+answered through ``builtins.input``. Nothing touches restic or a database.
 
-call_command note: Django's ``call_command`` handles argparse subparsers by
-passing the subcommand as the first positional argument, e.g.
-``call_command("recovery", "backup", database=["default"])``. Options defined
-on a subparser are forwarded as keyword arguments (``database=...``,
-``snapshot=...``, ``noinput=True``). The positional ``snapshot_id`` of the
-``remove`` subcommand is passed as a second positional argument.
+``call_command`` takes the subcommand as the first positional argument;
+subparser options are passed as keyword arguments, e.g.
+``call_command("recovery", "restore", snapshot="latest", database="default")``.
 """
 
 from unittest.mock import MagicMock
@@ -21,201 +15,151 @@ import pytest
 from django.core.exceptions import ImproperlyConfigured
 from django.core.management import call_command
 from django.core.management.base import CommandError
-from django.test import override_settings
 
 from django_recovery import services
-from django_recovery.restic import ResticError, Snapshot
-
-RECOVERY_WITH_RETENTION = {
-    "STORAGE": "recovery",
-    "PASSWORD": "test-password",
-    "RETENTION": {"daily": 7, "weekly": 4},
-}
+from django_recovery.restic import ResticError
+from tests.factories import make_snapshot
 
 
-def test_backup_calls_run_backup_with_databases(monkeypatch):
-    fake = MagicMock(return_value={"default": "ok"})
-    monkeypatch.setattr(services, "run_backup", fake)
+@pytest.fixture
+def patch_service(monkeypatch):
+    """Replace ``services.<name>`` with a mock and return it."""
+
+    def patch(name, **mock_kwargs):
+        mock = MagicMock(**mock_kwargs)
+        monkeypatch.setattr(services, name, mock)
+        return mock
+
+    return patch
+
+
+@pytest.fixture
+def answer(monkeypatch):
+    """Answer every confirmation prompt with ``text``."""
+    return lambda text: monkeypatch.setattr("builtins.input", lambda prompt="": text)
+
+
+@pytest.fixture
+def no_prompt(monkeypatch):
+    def fail(prompt=""):  # pragma: no cover - only runs if the test fails
+        raise AssertionError(f"unexpected prompt: {prompt!r}")
+
+    monkeypatch.setattr("builtins.input", fail)
+
+
+@pytest.fixture(autouse=True)
+def retention(recovery):
+    """A RETENTION policy, so ``prune`` is runnable in every test."""
+    recovery(RETENTION={"daily": 7})
+
+
+# (subcommand args, call_command kwargs, service function, answer that confirms)
+DESTRUCTIVE = [
+    pytest.param(("restore",), {"snapshot": "latest", "database": "default"},
+                 "run_restore", "default", id="restore"),
+    pytest.param(("remove", "abc123"), {}, "remove_snapshot", "yes", id="remove"),
+    pytest.param(("prune",), {}, "run_prune", "yes", id="prune"),
+]
+
+
+# --- simple pass-through ------------------------------------------------------
+
+def test_init_calls_service(patch_service):
+    run_init = patch_service("run_init")
+    call_command("recovery", "init")
+    run_init.assert_called_once()
+
+
+def test_backup_passes_databases_and_prints_summary(patch_service, capsys):
+    run_backup = patch_service("run_backup", return_value={"default": "ok"})
 
     call_command("recovery", "backup", database=["default"])
 
-    fake.assert_called_once()
-    _, kwargs = fake.call_args
-    assert kwargs["databases"] == ["default"]
+    assert run_backup.call_args.kwargs["databases"] == ["default"]
+    assert "default: ok" in capsys.readouterr().out
 
 
-def test_snapshots_prints_table(monkeypatch, capsys):
-    snap = Snapshot(
-        id="abc123def456",
-        short_id="abc123",
-        time="2026-07-14T12:00:00Z",
-        tags=["db:default", "test"],
-        paths=["/db/default.sql"],
-    )
-    monkeypatch.setattr(
-        services, "list_snapshots", MagicMock(return_value=[snap])
-    )
-
+@pytest.mark.parametrize("snapshots, expected", [
+    ([make_snapshot("abc123def456", tags=("db:default", "test"))],
+     "abc123de\t2026-07-14T10:00:00Z\tdb:default,test"),
+    ([], "No snapshots."),
+])
+def test_snapshots_output(patch_service, capsys, snapshots, expected):
+    patch_service("list_snapshots", return_value=snapshots)
     call_command("recovery", "snapshots")
-
-    out = capsys.readouterr().out
-    assert "abc123" in out
-    assert "db:default,test" in out
+    assert expected in capsys.readouterr().out
 
 
-def test_snapshots_empty(monkeypatch, capsys):
-    monkeypatch.setattr(services, "list_snapshots", MagicMock(return_value=[]))
+# --- confirmations -------------------------------------------------------------------
 
-    call_command("recovery", "snapshots")
-
-    assert "No snapshots." in capsys.readouterr().out
-
-
-def test_restore_noinput_calls_run_restore(monkeypatch):
-    fake = MagicMock()
-    monkeypatch.setattr(services, "run_restore", fake)
-
-    call_command(
-        "recovery", "restore",
-        snapshot="latest", database="default", noinput=True,
-    )
-
-    fake.assert_called_once()
-    _, kwargs = fake.call_args
-    assert kwargs["alias"] == "default"
-    assert kwargs["snapshot_id"] == "latest"
+@pytest.mark.parametrize("args, kwargs, service, confirm", DESTRUCTIVE)
+def test_destructive_command_runs_when_confirmed(
+    patch_service, answer, args, kwargs, service, confirm
+):
+    mock = patch_service(service)
+    answer(confirm)
+    call_command("recovery", *args, **kwargs)
+    mock.assert_called_once()
 
 
-def test_restore_mismatched_confirmation_aborts(monkeypatch):
-    fake = MagicMock()
-    monkeypatch.setattr(services, "run_restore", fake)
-    monkeypatch.setattr("builtins.input", lambda prompt="": "wrong")
-
-    with pytest.raises(CommandError):
-        call_command(
-            "recovery", "restore", snapshot="latest", database="default"
-        )
-
-    fake.assert_not_called()
+@pytest.mark.parametrize("args, kwargs, service, confirm", DESTRUCTIVE)
+def test_destructive_command_aborts_on_wrong_answer(
+    patch_service, answer, args, kwargs, service, confirm
+):
+    mock = patch_service(service)
+    answer("nope")
+    with pytest.raises(CommandError, match="aborted"):
+        call_command("recovery", *args, **kwargs)
+    mock.assert_not_called()
 
 
-def test_restore_matching_confirmation_runs(monkeypatch):
-    fake = MagicMock()
-    monkeypatch.setattr(services, "run_restore", fake)
-    monkeypatch.setattr("builtins.input", lambda prompt="": "default")
-
-    call_command(
-        "recovery", "restore", snapshot="latest", database="default"
-    )
-
-    fake.assert_called_once()
-    _, kwargs = fake.call_args
-    assert kwargs["alias"] == "default"
+@pytest.mark.usefixtures("no_prompt")
+@pytest.mark.parametrize("args, kwargs, service, confirm", DESTRUCTIVE)
+def test_noinput_skips_the_prompt(patch_service, args, kwargs, service, confirm):
+    mock = patch_service(service)
+    call_command("recovery", *args, noinput=True, **kwargs)
+    mock.assert_called_once()
 
 
-def test_remove_noinput_calls_remove_snapshot(monkeypatch):
-    fake = MagicMock()
-    monkeypatch.setattr(services, "remove_snapshot", fake)
-
-    call_command("recovery", "remove", "abc123", noinput=True)
-
-    fake.assert_called_once()
-    args, _ = fake.call_args
-    assert args[0] == "abc123"
+def test_restore_passes_alias_and_snapshot(patch_service):
+    run_restore = patch_service("run_restore")
+    call_command("recovery", "restore", snapshot="latest", database="default", noinput=True)
+    kwargs = run_restore.call_args.kwargs
+    assert (kwargs["alias"], kwargs["snapshot_id"]) == ("default", "latest")
 
 
-def test_remove_declined_confirmation_aborts(monkeypatch):
-    fake = MagicMock()
-    monkeypatch.setattr(services, "remove_snapshot", fake)
-    monkeypatch.setattr("builtins.input", lambda prompt="": "no")
-
-    with pytest.raises(CommandError):
-        call_command("recovery", "remove", "abc123")
-
-    fake.assert_not_called()
+@pytest.mark.usefixtures("no_prompt")
+def test_prune_dry_run_never_prompts(patch_service):
+    run_prune = patch_service("run_prune")
+    call_command("recovery", "prune", dry_run=True)
+    assert run_prune.call_args.kwargs["dry_run"] is True
 
 
-def test_init_calls_run_init(monkeypatch):
-    fake = MagicMock()
-    monkeypatch.setattr(services, "run_init", fake)
-
-    call_command("recovery", "init")
-
-    fake.assert_called_once()
-
-
-def test_prune_without_retention_raises(monkeypatch):
-    fake = MagicMock()
-    monkeypatch.setattr(services, "run_prune", fake)
-
+def test_prune_without_retention_refuses(patch_service, recovery):
+    recovery()  # no RETENTION
+    run_prune = patch_service("run_prune")
     with pytest.raises(CommandError, match="RETENTION"):
         call_command("recovery", "prune", noinput=True)
-
-    fake.assert_not_called()
-
-
-@override_settings(RECOVERY=RECOVERY_WITH_RETENTION)
-def test_prune_noinput_calls_run_prune(monkeypatch):
-    fake = MagicMock()
-    monkeypatch.setattr(services, "run_prune", fake)
-
-    call_command("recovery", "prune", noinput=True)
-
-    fake.assert_called_once()
-    assert fake.call_args.kwargs["dry_run"] is False
+    run_prune.assert_not_called()
 
 
-@override_settings(RECOVERY=RECOVERY_WITH_RETENTION)
-def test_prune_declined_confirmation_aborts(monkeypatch):
-    fake = MagicMock()
-    monkeypatch.setattr(services, "run_prune", fake)
-    monkeypatch.setattr("builtins.input", lambda prompt="": "no")
+# --- error reporting ----------------------------------------------------------------------
 
-    with pytest.raises(CommandError):
-        call_command("recovery", "prune")
-
-    fake.assert_not_called()
-
-
-@override_settings(RECOVERY=RECOVERY_WITH_RETENTION)
-def test_prune_dry_run_skips_prompt(monkeypatch):
-    fake = MagicMock()
-    monkeypatch.setattr(services, "run_prune", fake)
-
-    def explode(prompt=""):  # pragma: no cover - must not be called
-        raise AssertionError("dry-run must not prompt")
-
-    monkeypatch.setattr("builtins.input", explode)
-
-    call_command("recovery", "prune", dry_run=True)
-
-    fake.assert_called_once()
-    assert fake.call_args.kwargs["dry_run"] is True
-
-
-# --- error reporting ------------------------------------------------------------
-
-@pytest.mark.parametrize(
-    "exc",
-    [
-        ResticError(1, "Fatal: unable to open config file"),
-        FileNotFoundError(2, "No such file or directory", "psql"),
-        ImproperlyConfigured("settings.RECOVERY['STORAGE'] is required"),
-        ValueError("snapshot nope not found"),
-    ],
-)
-def test_expected_errors_become_command_error(monkeypatch, exc):
-    monkeypatch.setattr(services, "run_backup", MagicMock(side_effect=exc))
-
+@pytest.mark.parametrize("exc", [
+    ResticError(1, "Fatal: unable to open config file"),
+    FileNotFoundError(2, "No such file or directory", "psql"),
+    ImproperlyConfigured("settings.RECOVERY['STORAGE'] is required"),
+    ValueError("snapshot nope not found"),
+])
+def test_expected_errors_become_command_error(patch_service, exc):
+    patch_service("run_backup", side_effect=exc)
     with pytest.raises(CommandError) as info:
         call_command("recovery", "backup")
     assert str(info.value) == str(exc)
     assert info.value.__cause__ is exc
 
 
-def test_unexpected_errors_are_not_masked(monkeypatch):
-    # Programming errors keep their traceback.
-    monkeypatch.setattr(services, "run_backup", MagicMock(side_effect=TypeError("bug")))
-
+def test_unexpected_errors_keep_their_traceback(patch_service):
+    patch_service("run_backup", side_effect=TypeError("bug"))
     with pytest.raises(TypeError):
         call_command("recovery", "backup")
