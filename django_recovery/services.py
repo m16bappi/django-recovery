@@ -28,7 +28,7 @@ def _make_restic(config: RecoveryConfig | None = None) -> Restic:
     config = config or get_config()
     binary = resolve_binary(config)
     return Restic(
-        config.backend.repository,
+        config.repository.url,
         extra_env=config.restic_env(),
         binary=binary,
         global_args=build_global_args(config),

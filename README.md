@@ -6,7 +6,8 @@ Encrypted, deduplicated Django database and media backups, powered by [restic](h
 into restic snapshots: always encrypted, deduplicated across backups, and restorable
 through a management command.
 
-> **Status:** 🚧 beta / under active development. APIs and settings may change before 1.0.
+> **Status:** beta (`1.0.0b1`). Settings are the intended 1.0 API; please report issues
+> before the stable release.
 
 ## Highlights
 
@@ -15,8 +16,8 @@ through a management command.
 - **Deduplication** — daily backups cost only the delta, not a full copy each time.
 - **Atomic failure semantics** — a failed dump produces **no snapshot**, never a
   half-written one.
-- **Any storage** — local disk, S3 (and compatibles), GCS, Azure, SFTP, or anything
-  via rclone.
+- **Uses your `STORAGES`** — point it at a Django storage alias (local disk, or S3 and
+  compatibles, GCS, Azure, SFTP via django-storages); credentials live in one place.
 - **Guarded restores** — typed confirmation plus a tag guard that refuses to restore
   a snapshot into the wrong database.
 
@@ -27,8 +28,10 @@ pip install django-recovery
 ```
 
 Requires the [restic](https://restic.net/) binary (>= 0.16) on `PATH`, plus the
-command-line client for each database engine you back up (`pg_dump`/`psql`,
-`mysqldump`/`mysql`, or `sqlite3`).
+command-line client for each PostgreSQL or MySQL database you back up
+(`pg_dump`/`psql`, `mysqldump`/`mysql`); SQLite needs nothing extra. Backups go to a
+storage you already configure in `STORAGES` — Django's `FileSystemStorage` or a
+[django-storages](https://django-storages.readthedocs.io/) backend your project uses.
 
 ## Quickstart
 
@@ -41,9 +44,16 @@ INSTALLED_APPS = [
     "django_recovery",
 ]
 
+STORAGES = {
+    # ... "default" and "staticfiles" ...
+    "backups": {
+        "BACKEND": "django.core.files.storage.FileSystemStorage",
+        "OPTIONS": {"location": "/var/backups/myapp-restic"},
+    },
+}
+
 RECOVERY = {
-    "BACKEND": "django_recovery.backends.LocalBackend",
-    "OPTIONS": {"path": "/var/backups/myapp-restic"},
+    "STORAGE": "backups",
     "PASSWORD": os.environ["RESTIC_PASSWORD"],
     "DATABASES": ["default"],
 }
@@ -57,7 +67,7 @@ python manage.py recovery snapshots
 
 ## Documentation
 
-Full documentation — settings reference, storage backends, management commands,
+Full documentation — settings reference, storage, management commands,
 scheduling, and FAQ — lives at
 **[m16bappi.github.io/django-recovery](https://m16bappi.github.io/django-recovery/)**.
 

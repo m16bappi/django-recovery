@@ -6,6 +6,11 @@
 pip install django-recovery
 ```
 
+That's the only package. Backups go to a `STORAGES` alias your project already
+configures: Django's built-in `FileSystemStorage` for a local directory, or a
+[django-storages](https://django-storages.readthedocs.io/) backend (S3, GCS, Azure,
+SFTP) set up per its own documentation. See [Storage](storage.md).
+
 ## 2. Install restic
 
 **restic must be installed on the system** (>= 0.16, for `--stdin-from-command`) and

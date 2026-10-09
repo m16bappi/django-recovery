@@ -5,8 +5,7 @@ Annotate the setting to get IDE autocomplete and static key/type checking::
     from django_recovery.types import RecoverySettings
 
     RECOVERY: RecoverySettings = {
-        "BACKEND": "django_recovery.backends.S3Backend",
-        "OPTIONS": {"bucket_name": "myapp-backups"},
+        "STORAGE": "backups",  # a settings.STORAGES alias
         "PASSWORD": os.environ["RESTIC_PASSWORD"],
     }
 
@@ -17,7 +16,7 @@ annotations, so the static and runtime views can never drift apart.
 
 from __future__ import annotations
 
-from typing import Any, Literal, TypedDict
+from typing import Literal, TypedDict
 
 
 class RetentionOptions(TypedDict, total=False):
@@ -53,13 +52,12 @@ class TuningOptions(TypedDict, total=False):
 class _RecoveryRequired(TypedDict):
     # Split base carries the only required key; RecoverySettings layers the
     # optional ones on top (typing.Required needs 3.11, this works on 3.10).
-    BACKEND: str
+    STORAGE: str
 
 
 class RecoverySettings(_RecoveryRequired, total=False):
-    """The full ``settings.RECOVERY`` dict. Only ``BACKEND`` is required."""
+    """The full ``settings.RECOVERY`` dict. Only ``STORAGE`` is required."""
 
-    OPTIONS: dict[str, Any]
     PASSWORD: str
     PASSWORD_FILE: str
     DATABASES: list[str]

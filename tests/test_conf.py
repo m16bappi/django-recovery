@@ -1,21 +1,24 @@
+import os
+
 import pytest
 from django.core.exceptions import ImproperlyConfigured
 from django.test import override_settings
 
 from django_recovery import conf
-from django_recovery.backends import LocalBackend, S3Backend
 from django_recovery.conf import (
     RecoveryConfig,
     build_global_args,
     get_config,
     resolve_binary,
 )
+from django_recovery.storage import Repository
+
+REPO = os.path.abspath("/tmp/test-repo")  # FileSystemStorage resolves location
 
 
 def _local(**overrides):
     raw = {
-        "BACKEND": "django_recovery.backends.LocalBackend",
-        "OPTIONS": {"path": "/tmp/test-repo"},
+        "STORAGE": "recovery",
         "PASSWORD": "test-password",
     }
     raw.update(overrides)
@@ -25,9 +28,7 @@ def _local(**overrides):
 def test_get_config_defaults_filled():
     config = get_config()
     assert isinstance(config, RecoveryConfig)
-    assert isinstance(config.backend, LocalBackend)
-    assert config.backend.repository == "/tmp/test-repo"
-    assert config.backend.env() == {}
+    assert config.repository == Repository(url=REPO)
     assert config.restic_env() == {"RESTIC_PASSWORD": "test-password"}
     assert config.password == "test-password"
     assert config.databases == ["default"]
@@ -45,21 +46,22 @@ def test_get_config_databases_defaults_when_absent():
     assert config.binary is None
 
 
-def test_missing_backend_raises():
-    with override_settings(RECOVERY={"OPTIONS": {"path": "/tmp/x"}}):
-        with pytest.raises(ImproperlyConfigured, match="BACKEND"):
+def test_missing_storage_raises():
+    with override_settings(RECOVERY={"PASSWORD": "pw"}):
+        with pytest.raises(ImproperlyConfigured, match="STORAGE"):
             get_config()
 
 
-def test_unimportable_backend_raises():
-    with override_settings(RECOVERY=_local(BACKEND="django_recovery.backends.Nope")):
-        with pytest.raises(ImproperlyConfigured, match="Could not import"):
+def test_removed_backend_key_rejected():
+    raw = _local(BACKEND="django_recovery.backends.LocalBackend")
+    with override_settings(RECOVERY=raw):
+        with pytest.raises(ImproperlyConfigured, match="Unknown key.*BACKEND"):
             get_config()
 
 
-def test_non_backend_class_raises():
-    with override_settings(RECOVERY=_local(BACKEND="django_recovery.conf.get_config")):
-        with pytest.raises(ImproperlyConfigured, match="not a BaseBackend subclass"):
+def test_removed_options_key_rejected():
+    with override_settings(RECOVERY=_local(OPTIONS={"location": "restic"})):
+        with pytest.raises(ImproperlyConfigured, match="Unknown key.*OPTIONS"):
             get_config()
 
 
@@ -116,14 +118,6 @@ def test_no_password_keys_accepted_env_is_users_concern():
     # No password key in the overlay: restic reads RESTIC_PASSWORD /
     # RESTIC_PASSWORD_FILE from the inherited process environment.
     assert config.restic_env() == {}
-
-
-def test_password_in_options_rejected():
-    raw = _local()
-    raw["OPTIONS"] = {"path": "/tmp/test-repo", "password": "pw"}
-    with override_settings(RECOVERY=raw):
-        with pytest.raises(ImproperlyConfigured, match="Invalid option 'password'"):
-            get_config()
 
 
 # --- RETENTION / TUNING validation -----------------------------------------
@@ -198,7 +192,7 @@ def test_build_global_args_empty_by_default():
 
 def test_build_global_args_full_tuning():
     config = RecoveryConfig(
-        backend=LocalBackend(path="/repo"),
+        repository=Repository(url="/repo"),
         databases=["default"],
         tuning={
             "compression": "max",
@@ -223,7 +217,7 @@ def test_build_global_args_full_tuning():
 
 def test_build_global_args_connections_scoped_to_scheme():
     config = RecoveryConfig(
-        backend=S3Backend(bucket_name="b", access_key="a", secret_key="s"),
+        repository=Repository(url="s3:s3.amazonaws.com/b"),
         databases=["default"],
         tuning={"connections": 8},
     )
@@ -232,7 +226,7 @@ def test_build_global_args_connections_scoped_to_scheme():
 
 def test_build_global_args_connections_skipped_for_local_path():
     config = RecoveryConfig(
-        backend=LocalBackend(path="C:\\backups\\repo"),
+        repository=Repository(url="C:\\backups\\repo"),
         databases=["default"],
         tuning={"connections": 8},
     )
@@ -242,7 +236,7 @@ def test_build_global_args_connections_skipped_for_local_path():
 
 def _config(binary=None):
     return RecoveryConfig(
-        backend=LocalBackend(path="/repo"),
+        repository=Repository(url="/repo"),
         databases=["default"],
         binary=binary,
     )

@@ -25,8 +25,8 @@ import pytest
 from django.test import override_settings
 
 from django_recovery import services
-from django_recovery.backends import LocalBackend
 from django_recovery.conf import RecoveryConfig
+from django_recovery.storage import Repository
 
 
 def _restic_binary() -> str | None:
@@ -63,7 +63,7 @@ def test_sqlite_backup_restore_roundtrip(tmp_path, monkeypatch):
     db_path = tmp_path / "app.sqlite3"
 
     config = RecoveryConfig(
-        backend=LocalBackend(path=str(repo)),
+        repository=Repository(url=str(repo)),
         password="test-pass",
         databases=["default"],
         media=False,

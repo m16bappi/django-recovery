@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "django-recovery"
-version = "0.3.0b1"
+version = "1.0.0b1"
 description = "Encrypted, deduplicated Django database and media backups, powered by restic"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -19,6 +19,7 @@ classifiers = [
     "Framework :: Django :: 5.0",
     "Framework :: Django :: 5.1",
     "Framework :: Django :: 5.2",
+    "Framework :: Django :: 6.0",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: BSD License",
     "Operating System :: OS Independent",

@@ -1,15 +1,17 @@
 # Why django-recovery
 
 !!! warning "Beta"
-    django-recovery is 🚧 under active development. APIs and settings may change before 1.0.
+    `1.0.0b1` is a pre-release. Settings are the intended 1.0 API; please report issues
+    before the stable release.
 
 **django-recovery** turns your Django `DATABASES` (and optionally your media directory)
 into [restic](https://restic.net/) snapshots: always encrypted, deduplicated across
 backups, and restorable through a management command.
 
-You configure it like any Django storage — a backend class plus options in
-`settings.py` — and get production-grade backups without writing a single shell script.
-Setup lives in [Quickstart](quickstart.md); this page is the *why*.
+You point it at one of your Django `STORAGES` aliases in `settings.py` — local disk or
+any django-storages bucket you already configure — and get production-grade backups
+without writing a single shell script. Setup lives in [Quickstart](quickstart.md); this
+page is the *why*.
 
 ## The problem with the usual approach
 
@@ -41,8 +43,9 @@ is created**. A half-written backup cannot exist.
 **Deduplication.** restic splits data into content-defined chunks and stores each chunk
 once. Tomorrow's backup only stores what changed since today's.
 
-**Any storage.** Local disk, S3 and every S3-compatible service, Google Cloud Storage,
-Azure Blob, SFTP — plus anything else through rclone.
+**Your storage.** Backups go to one of your Django `STORAGES` aliases: local disk via
+`FileSystemStorage`, or S3 and every S3-compatible service, Google Cloud Storage, Azure
+Blob, SFTP via django-storages.
 
 **Verifiable.** The repository is a documented, open format; `restic check` audits it,
 and any snapshot can be mounted or dumped with plain restic — your backups are never
@@ -99,9 +102,10 @@ restic alone doesn't know what a Django project is. django-recovery contributes:
 
 - **Zero-duplication configuration** — dump/restore commands are built from
   `settings.DATABASES`; credentials are never copied into a second config system.
-- **Django-native setup** — a `STORAGES`-style `RECOVERY` setting with validated
-  backend classes; misconfiguration fails loudly with `ImproperlyConfigured`.
-- **One management command** — `recovery init|backup|restore|snapshots|remove`, with
+- **Django-native setup** — the repository comes from a `STORAGES` alias, so
+  storage credentials live in one place; misconfiguration fails loudly with
+  `ImproperlyConfigured`.
+- **One management command** — `recovery init|backup|restore|snapshots|remove|prune`, with
   confirmation prompts and a tag guard that refuses to restore a snapshot into the
   wrong database.
 
@@ -113,4 +117,4 @@ restic alone doesn't know what a Django project is. django-recovery contributes:
 
 - [Installation](installation.md) — install the package and the restic binary.
 - [Quickstart](quickstart.md) — first backup in five minutes.
-- [Storage backends](backends.md) — S3, GCS, Azure, SFTP, local, rclone.
+- [Storage](storage.md) — S3, GCS, Azure, SFTP, local directory.

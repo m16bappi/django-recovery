@@ -7,7 +7,9 @@ from django_recovery.types import RecoverySettings, RetentionOptions, TuningOpti
 def test_known_keys_derive_from_recovery_settings():
     assert conf._KNOWN_KEYS == frozenset(RecoverySettings.__annotations__)
     # Required key present alongside the optional ones (inherited annotations).
-    assert "BACKEND" in conf._KNOWN_KEYS
+    assert "STORAGE" in conf._KNOWN_KEYS
+    assert "BACKEND" not in conf._KNOWN_KEYS
+    assert "OPTIONS" not in conf._KNOWN_KEYS
     assert "PASSWORD" in conf._KNOWN_KEYS
     assert "TUNING" in conf._KNOWN_KEYS
 
@@ -22,10 +24,9 @@ def test_retention_and_tuning_keys_derive_from_typeddicts():
 def test_recovery_settings_annotation_accepts_valid_dict():
     # Static-typing helper is usable at runtime as a plain dict.
     settings: RecoverySettings = {
-        "BACKEND": "django_recovery.backends.LocalBackend",
-        "OPTIONS": {"path": "/repo"},
+        "STORAGE": "backups",
         "PASSWORD": "pw",
         "RETENTION": {"daily": 7},
         "TUNING": {"compression": "max"},
     }
-    assert settings["BACKEND"].endswith("LocalBackend")
+    assert settings["STORAGE"] == "backups"

@@ -5,7 +5,7 @@ Progress is printed to stdout as it happens.
 
 ## `recovery init`
 
-Initialize the restic repository defined by the configured storage backend. Run once.
+Initialize the restic repository defined by the configured storage. Run once.
 
 ```bash
 python manage.py recovery init

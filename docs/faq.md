@@ -2,9 +2,21 @@
 
 ## One repository or many?
 
-v1 uses exactly **one** repository (the configured `BACKEND` + `OPTIONS`) for all
+v1 uses exactly **one** repository (the configured `STORAGE`) for all
 databases and media, separated by tags. Per-database repositories are out of scope for
 now.
+
+## Which storages can hold the repository?
+
+Django's `FileSystemStorage` and django-storages' `S3Storage` (and S3-compatible
+services), `GoogleCloudStorage`, `AzureStorage`, and `SFTPStorage` — see
+[Storage](storage.md). Other storage classes (FTP, Dropbox, ...) have no restic
+equivalent and are rejected with `ImproperlyConfigured`.
+
+## Do I need django-storages?
+
+Only if the repository lives in a cloud bucket or on SFTP — and then you install and
+configure it for your project as usual. django-recovery itself depends on Django only.
 
 ## Does it back up media files?
 
