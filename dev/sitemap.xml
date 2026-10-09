@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+    <url>
+         <loc>https://m16bappi.github.io/django-recovery/dev/</loc>
+         <lastmod>2026-10-09</lastmod>
+    </url>
+    <url>
+         <loc>https://m16bappi.github.io/django-recovery/dev/configuration/</loc>
+         <lastmod>2026-10-09</lastmod>
+    </url>
+    <url>
+         <loc>https://m16bappi.github.io/django-recovery/dev/storage/</loc>
+         <lastmod>2026-10-09</lastmod>
+    </url>
+    <url>
+         <loc>https://m16bappi.github.io/django-recovery/dev/usage/</loc>
+         <lastmod>2026-10-09</lastmod>
+    </url>
+</urlset>
