@@ -4,7 +4,7 @@ All notable changes to django-recovery are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project adheres to
 [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.0.0b3] - 2026-10-09
 
 ### Added
 
@@ -168,6 +168,7 @@ All notable changes to django-recovery are documented here. The format follows
 - `manage.py recovery` command: `init`, `backup`, `restore`, `snapshots`,
   `remove`.
 
+[1.0.0b3]: https://github.com/m16bappi/django-recovery/releases/tag/v1.0.0b3
 [1.0.0b2]: https://github.com/m16bappi/django-recovery/releases/tag/v1.0.0b2
 [1.0.0b1]: https://github.com/m16bappi/django-recovery/releases/tag/v1.0.0b1
 [0.3.0b1]: https://github.com/m16bappi/django-recovery/releases/tag/v0.3.0b1
