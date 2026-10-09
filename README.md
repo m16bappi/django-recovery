@@ -6,7 +6,7 @@ Encrypted, deduplicated Django database and media backups, powered by [restic](h
 into restic snapshots: always encrypted, deduplicated across backups, and restorable
 through a management command.
 
-> **Status:** beta (`1.0.0b3`). Settings are the intended 1.0 API; please report issues
+> **Status:** beta (`1.0.0b4`). Settings are the intended 1.0 API; please report issues
 > before the stable release.
 
 ## Highlights
