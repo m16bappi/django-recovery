@@ -624,10 +624,11 @@
 </table>
 <p><code>restore</code>, <code>remove</code>, and <code>prune</code> ask you to confirm first. Add <code>--noinput</code> to skip the
 question in scripts.</p>
-<p>Restore also checks that the backup belongs to the database you named, so you cannot
+<p>Restore also checks that the backup belongs to the database you named, so you can't
 load the <code>analytics</code> backup into <code>default</code> by mistake.</p>
 <h2 id="run-backups-on-a-schedule">Run backups on a schedule<a class="headerlink" href="#run-backups-on-a-schedule" title="Permanent link">&para;</a></h2>
-<p>django-recovery does not run by itself. Use cron or Celery.</p>
+<p>django-recovery doesn't schedule anything itself. Use whatever you already have, like
+cron or Celery.</p>
 <p><strong>cron:</strong></p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>PATH=/usr/local/bin:/usr/bin:/bin
 <a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>
@@ -678,33 +679,34 @@ load the <code>analytics</code> backup into <code>default</code> by mistake.</p>
 </tr>
 </tbody>
 </table>
-<p>Host, port, user, and password come from <code>settings.DATABASES</code>. You do not repeat them.</p>
+<p>Host, port, user, and password come from <code>settings.DATABASES</code>, so you don't repeat them
+anywhere.</p>
 <h2 id="how-it-works">How it works<a class="headerlink" href="#how-it-works" title="Permanent link">&para;</a></h2>
-<ul>
-<li><strong>Backup:</strong> restic runs the dump command (for example <code>pg_dump</code>) and saves its output.
-  If the dump fails, restic saves nothing.</li>
-<li><strong>Restore:</strong> restic streams the backup straight into <code>psql</code> / <code>mysql</code>.</li>
-<li>Every backup is labelled <code>db:&lt;name&gt;</code> (or <code>media</code>). Labels are how <code>latest</code> and the
-  restore check find the right backup.</li>
-<li>Dumps are not compressed first — restic compresses them after splitting them into
-  chunks, so it can still skip the parts that did not change.</li>
-</ul>
+<p>When you back up, restic runs the dump command itself (for example <code>pg_dump</code>) and saves
+what it prints. If the dump fails, restic saves nothing, so you never end up with a
+half-written backup. Restoring works the other way around: restic streams the backup
+straight into <code>psql</code> or <code>mysql</code>.</p>
+<p>Every backup gets a label, <code>db:&lt;name&gt;</code> or <code>media</code>. That's how <code>latest</code> finds the newest
+backup for a database, and how restore knows it has the right one.</p>
+<p>The dumps aren't compressed before restic sees them. restic splits them into chunks
+first and compresses after that, which is what lets it skip the parts that didn't
+change since the last backup.</p>
 <h2 id="faq">FAQ<a class="headerlink" href="#faq" title="Permanent link">&para;</a></h2>
 <p><strong>Do I need django-storages?</strong>
 Only for cloud or SFTP storage. A local folder uses Django's own <code>FileSystemStorage</code>.</p>
 <p><strong>Can I use one repository per database?</strong>
 No. All databases and media go into one repository, separated by labels.</p>
-<p><strong>"repository is locked" — what now?</strong>
-A stopped backup can leave a lock. Remove it with restic, using the same repository
-and password: <code>restic -r &lt;repository&gt; unlock</code> (for a local folder, the repository is
-the folder path).</p>
-<p><strong>I lost the password.</strong>
-The backups cannot be opened. There is no reset.</p>
+<p><strong>What do I do about "repository is locked"?</strong>
+A backup that got killed halfway can leave a lock behind. Remove it with restic, using
+the same repository and password: <code>restic -r &lt;repository&gt; unlock</code>. For a local folder,
+the repository is just the folder path.</p>
+<p><strong>I lost the password. Can I get my backups back?</strong>
+No. Without the password the backups can't be opened, and there's no reset.</p>
 <p><strong>Is this point-in-time recovery?</strong>
 No. A backup is the database at the moment it ran. Back up more often (deduplication
 keeps it cheap) or use a WAL tool like pgBackRest for true point-in-time recovery.</p>
-<p><strong>Why must restic be installed separately?</strong>
-It is a normal system program, like <code>pg_dump</code>. You update it on its own.</p>
+<p><strong>Why do I have to install restic separately?</strong>
+It's a normal system program, like <code>pg_dump</code>, so you can update it on its own schedule.</p>
 
 
 

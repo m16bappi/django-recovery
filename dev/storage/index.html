@@ -598,18 +598,18 @@
 
 
 <h1 id="storage">Storage<a class="headerlink" href="#storage" title="Permanent link">&para;</a></h1>
-<p>Backups go to one of your Django <code>STORAGES</code>. Give it a name, then put that name in
-<code>RECOVERY["STORAGE"]</code>:</p>
+<p>Backups go to one of the storages in your Django <code>STORAGES</code> setting. Pick one (or add a
+new one) and put its name in <code>RECOVERY["STORAGE"]</code>:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="n">RECOVERY</span> <span class="o">=</span> <span class="p">{</span><span class="s2">"STORAGE"</span><span class="p">:</span> <span class="s2">"backups"</span><span class="p">,</span> <span class="s2">"PASSWORD"</span><span class="p">:</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">[</span><span class="s2">"RESTIC_PASSWORD"</span><span class="p">]}</span>
 </code></pre></div>
-<p>django-recovery reads the bucket, folder, and credentials from that storage. You do not
-write them twice. For cloud storage, install and set up
-<a href="https://django-storages.readthedocs.io/">django-storages</a> as you normally would.</p>
+<p>django-recovery reads the bucket, folder, and credentials from that storage, so you
+don't have to write them twice. For cloud storage, install and set up
+<a href="https://django-storages.readthedocs.io/">django-storages</a> the way you normally would.</p>
 <div class="admonition warning">
 <p class="admonition-title">Use a separate storage for backups</p>
-<p>If backups share the media bucket and its keys, anyone who gets those keys can
-delete your backups too. Use a separate bucket if you can. At least use a separate
-folder (<code>location</code>) — see the S3 example below.</p>
+<p>If backups share the media bucket and its keys, anyone who gets hold of those keys
+can delete your backups too. A separate bucket is best. If that's not an option, at
+least give backups their own folder with <code>location</code>, like in the S3 example below.</p>
 </div>
 <h2 id="local-folder">Local folder<a class="headerlink" href="#local-folder" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="s2">"backups"</span><span class="p">:</span> <span class="p">{</span>
@@ -636,8 +636,8 @@ the server's IAM role. <code>session_profile</code> (an AWS profile name) also w
 <a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>    <span class="s2">"OPTIONS"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"bucket_name"</span><span class="p">:</span> <span class="s2">"myapp-backups"</span><span class="p">,</span> <span class="s2">"location"</span><span class="p">:</span> <span class="s2">"restic"</span><span class="p">},</span>
 <a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="p">}</span>
 </code></pre></div>
-<p>On Google Cloud (GCE, GKE, Cloud Run) it uses the attached service account — nothing
-else to do. Elsewhere, set the <code>GOOGLE_APPLICATION_CREDENTIALS</code> environment variable to
+<p>On Google Cloud (GCE, GKE, Cloud Run) it uses the attached service account, so there's
+nothing else to set up. Elsewhere, set the <code>GOOGLE_APPLICATION_CREDENTIALS</code> environment variable to
 your key file. (A <code>GS_CREDENTIALS</code> object alone is not enough for restic.)</p>
 <h2 id="azure-blob-storage">Azure Blob Storage<a class="headerlink" href="#azure-blob-storage" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="s2">"backups"</span><span class="p">:</span> <span class="p">{</span>

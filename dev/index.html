@@ -324,10 +324,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#install" class="md-nav__link">
+  <a href="#get-started" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Install
+        Get started
       
     </span>
   </a>
@@ -335,21 +335,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#set-up-in-5-minutes" class="md-nav__link">
+  <a href="#where-to-go-next" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Set up in 5 minutes
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#next" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Next
+        Where to go next
       
     </span>
   </a>
@@ -472,10 +461,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#install" class="md-nav__link">
+  <a href="#get-started" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Install
+        Get started
       
     </span>
   </a>
@@ -483,21 +472,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#set-up-in-5-minutes" class="md-nav__link">
+  <a href="#where-to-go-next" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Set up in 5 minutes
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#next" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Next
+        Where to go next
       
     </span>
   </a>
@@ -530,95 +508,65 @@
 
 
 <h1 id="django-recovery">django-recovery<a class="headerlink" href="#django-recovery" title="Permanent link">&para;</a></h1>
-<div class="admonition warning">
-<p class="admonition-title">Beta</p>
-<p><code>1.0.0b1</code> is a pre-release. Please report issues before the stable release.</p>
-</div>
-<p>Docs for other versions: use the version menu at the top of the page.</p>
-<p><strong>django-recovery backs up your Django databases (and media files) with
-<a href="https://restic.net/">restic</a>.</strong> You run one command, and you get a backup that is:</p>
-<ul>
-<li><strong>encrypted</strong> — always, before it leaves your server;</li>
-<li><strong>small</strong> — each new backup only stores what changed;</li>
-<li><strong>safe</strong> — if the database dump fails, no broken backup is saved;</li>
-<li><strong>easy to restore</strong> — one command puts it back.</li>
-</ul>
-<p>Backups are saved to a storage you already have in Django's <code>STORAGES</code> setting: a local
-folder, or S3, Google Cloud Storage, Azure, or SFTP through
-<a href="https://django-storages.readthedocs.io/">django-storages</a>.</p>
-<h2 id="install">Install<a class="headerlink" href="#install" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>pip<span class="w"> </span>install<span class="w"> </span>--pre<span class="w"> </span>django-recovery
+<p><strong>Back up your Django database with one command, and restore it with another.</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>python<span class="w"> </span>manage.py<span class="w"> </span>recovery<span class="w"> </span>backup<span class="w">        </span><span class="c1"># save a backup</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>python<span class="w"> </span>manage.py<span class="w"> </span>recovery<span class="w"> </span>snapshots<span class="w">     </span><span class="c1"># list your backups</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>python<span class="w"> </span>manage.py<span class="w"> </span>recovery<span class="w"> </span>restore<span class="w"> </span>--snapshot<span class="w"> </span>latest<span class="w"> </span>--database<span class="w"> </span>default<span class="w">   </span><span class="c1"># put it back</span>
 </code></pre></div>
-<p>You also need:</p>
-<ul>
-<li><strong>restic</strong> 0.16 or newer, on your <code>PATH</code>
-  (<code>apt install restic</code>, <code>brew install restic</code>, or <code>choco install restic</code>);</li>
-<li><strong>your database's tools</strong>: <code>pg_dump</code> and <code>psql</code> for PostgreSQL, <code>mysqldump</code> and
-  <code>mysql</code> for MySQL. SQLite needs nothing extra.</li>
-</ul>
-<p>Add the app:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="n">INSTALLED_APPS</span> <span class="o">=</span> <span class="p">[</span>
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>    <span class="c1"># ...</span>
-<a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>    <span class="s2">"django_recovery"</span><span class="p">,</span>
-<a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="p">]</span>
+<p>Most Django projects back up with a cron job that runs <code>pg_dump</code>, gzips the output, and
+copies it somewhere. That works fine until the dump fails halfway and the broken file
+gets uploaded anyway. You usually find out during a restore.</p>
+<p>django-recovery hands the job to <a href="https://restic.net/">restic</a> instead. If the dump
+fails, restic saves nothing. Every backup is encrypted before it leaves your server, and
+each new one only stores what changed since the last, so nightly backups of a big
+database stay small.</p>
+<p>It works with PostgreSQL, MySQL, and SQLite, and it can back up your media files too.
+Backups go wherever your Django <code>STORAGES</code> point: a local folder, S3, Google Cloud
+Storage, Azure, or SFTP.</p>
+<h2 id="get-started">Get started<a class="headerlink" href="#get-started" title="Permanent link">&para;</a></h2>
+<p><strong>1. Install it.</strong> It's in beta right now, so you need <code>--pre</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>pip<span class="w"> </span>install<span class="w"> </span>--pre<span class="w"> </span>django-recovery
 </code></pre></div>
-<h2 id="set-up-in-5-minutes">Set up in 5 minutes<a class="headerlink" href="#set-up-in-5-minutes" title="Permanent link">&para;</a></h2>
-<p><strong>1. Tell Django where backups go.</strong> Add a storage for them, then point <code>RECOVERY</code> at it:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="c1"># settings.py</span>
-<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
-<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>
-<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="n">STORAGES</span> <span class="o">=</span> <span class="p">{</span>
-<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>    <span class="c1"># ... your "default" and "staticfiles" entries ...</span>
-<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a>    <span class="s2">"backups"</span><span class="p">:</span> <span class="p">{</span>
-<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>        <span class="s2">"BACKEND"</span><span class="p">:</span> <span class="s2">"django.core.files.storage.FileSystemStorage"</span><span class="p">,</span>
-<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a>        <span class="s2">"OPTIONS"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"location"</span><span class="p">:</span> <span class="s2">"/var/backups/myapp"</span><span class="p">},</span>
-<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>    <span class="p">},</span>
-<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="p">}</span>
-<a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>
-<a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="n">RECOVERY</span> <span class="o">=</span> <span class="p">{</span>
-<a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a>    <span class="s2">"STORAGE"</span><span class="p">:</span> <span class="s2">"backups"</span><span class="p">,</span>
-<a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a>    <span class="s2">"PASSWORD"</span><span class="p">:</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">[</span><span class="s2">"RESTIC_PASSWORD"</span><span class="p">],</span>
-<a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a><span class="p">}</span>
+<p>You'll also need <a href="https://restic.net/">restic</a> 0.16 or newer on the server, plus the dump
+tools for your database: <code>pg_dump</code> and <code>psql</code> for PostgreSQL, or <code>mysqldump</code> and <code>mysql</code>
+for MySQL. SQLite doesn't need anything extra.</p>
+<p><strong>2. Add it to <code>settings.py</code>.</strong> The <code>backups</code> storage here is a plain folder on the
+server. The <a href="storage/">Storage</a> page shows how to use S3 or another provider instead.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>
+<a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="n">INSTALLED_APPS</span> <span class="o">=</span> <span class="p">[</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>    <span class="c1"># ...</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a>    <span class="s2">"django_recovery"</span><span class="p">,</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="p">]</span>
+<a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a>
+<a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="n">STORAGES</span> <span class="o">=</span> <span class="p">{</span>
+<a id="__codelineno-2-9" name="__codelineno-2-9" href="#__codelineno-2-9"></a>    <span class="c1"># ... your existing storages ...</span>
+<a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a>    <span class="s2">"backups"</span><span class="p">:</span> <span class="p">{</span>
+<a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>        <span class="s2">"BACKEND"</span><span class="p">:</span> <span class="s2">"django.core.files.storage.FileSystemStorage"</span><span class="p">,</span>
+<a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a>        <span class="s2">"OPTIONS"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"location"</span><span class="p">:</span> <span class="s2">"/var/backups/myapp"</span><span class="p">},</span>
+<a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a>    <span class="p">},</span>
+<a id="__codelineno-2-14" name="__codelineno-2-14" href="#__codelineno-2-14"></a><span class="p">}</span>
+<a id="__codelineno-2-15" name="__codelineno-2-15" href="#__codelineno-2-15"></a>
+<a id="__codelineno-2-16" name="__codelineno-2-16" href="#__codelineno-2-16"></a><span class="n">RECOVERY</span> <span class="o">=</span> <span class="p">{</span>
+<a id="__codelineno-2-17" name="__codelineno-2-17" href="#__codelineno-2-17"></a>    <span class="s2">"STORAGE"</span><span class="p">:</span> <span class="s2">"backups"</span><span class="p">,</span>                        <span class="c1"># where backups go</span>
+<a id="__codelineno-2-18" name="__codelineno-2-18" href="#__codelineno-2-18"></a>    <span class="s2">"PASSWORD"</span><span class="p">:</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">[</span><span class="s2">"RESTIC_PASSWORD"</span><span class="p">],</span>   <span class="c1"># encrypts them</span>
+<a id="__codelineno-2-19" name="__codelineno-2-19" href="#__codelineno-2-19"></a><span class="p">}</span>
 </code></pre></div>
-<p>Want S3 instead? Change only the storage — <code>RECOVERY</code> stays the same:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="n">STORAGES</span> <span class="o">=</span> <span class="p">{</span>
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>    <span class="c1"># ...</span>
-<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>    <span class="s2">"backups"</span><span class="p">:</span> <span class="p">{</span>
-<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>        <span class="s2">"BACKEND"</span><span class="p">:</span> <span class="s2">"storages.backends.s3.S3Storage"</span><span class="p">,</span>
-<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>        <span class="s2">"OPTIONS"</span><span class="p">:</span> <span class="p">{</span><span class="s2">"bucket_name"</span><span class="p">:</span> <span class="s2">"myapp-backups"</span><span class="p">},</span>
-<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>    <span class="p">},</span>
-<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a><span class="p">}</span>
-</code></pre></div>
-<p>More examples: <a href="storage/">Storage</a>.</p>
 <div class="admonition danger">
-<p class="admonition-title">Keep your password safe</p>
-<p>The password encrypts your backups. If you lose it, the backups cannot be opened —
-by anyone. Store it somewhere safe, away from the backups.</p>
+<p class="admonition-title">Keep the password somewhere safe</p>
+<p>It encrypts your backups. If you lose it, nobody can open them, and there's no way
+to reset it.</p>
 </div>
-<p><strong>2. Create the backup repository</strong> (once):</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>python<span class="w"> </span>manage.py<span class="w"> </span>recovery<span class="w"> </span>init
+<p><strong>3. Create the repository and run your first backup:</strong></p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>python<span class="w"> </span>manage.py<span class="w"> </span>recovery<span class="w"> </span>init
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>python<span class="w"> </span>manage.py<span class="w"> </span>recovery<span class="w"> </span>backup
 </code></pre></div>
-<p><strong>3. Make a backup:</strong></p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>python<span class="w"> </span>manage.py<span class="w"> </span>recovery<span class="w"> </span>backup
-</code></pre></div>
-<p><strong>4. See your backups:</strong></p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>python<span class="w"> </span>manage.py<span class="w"> </span>recovery<span class="w"> </span>snapshots
-</code></pre></div>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>1a2b3c4d    2026-10-09T02:00:01Z    db:default    /default.sql
-</code></pre></div>
-<p><strong>5. Restore when you need to:</strong></p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>python<span class="w"> </span>manage.py<span class="w"> </span>recovery<span class="w"> </span>restore<span class="w"> </span>--snapshot<span class="w"> </span>latest<span class="w"> </span>--database<span class="w"> </span>default
-</code></pre></div>
-<p>It asks you to type the database name first, because restore replaces the current data.</p>
-<p><strong>6. Run backups every night</strong> with cron:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>0 2 * * *  cd /srv/myapp &amp;&amp; .venv/bin/python manage.py recovery backup
-</code></pre></div>
-<h2 id="next">Next<a class="headerlink" href="#next" title="Permanent link">&para;</a></h2>
-<ul>
-<li><a href="storage/">Storage</a> — S3, Google Cloud, Azure, SFTP, local folder.</li>
-<li><a href="configuration/">Settings</a> — every option, keeping old backups, speed.</li>
-<li><a href="usage/">Usage</a> — all commands, Celery, supported databases, FAQ.</li>
-</ul>
+<p>You only run <code>init</code> once. After that, <code>recovery backup</code> is all you need, and the
+<a href="usage/">Usage</a> page shows how to run it every night with cron or Celery.</p>
+<h2 id="where-to-go-next">Where to go next<a class="headerlink" href="#where-to-go-next" title="Permanent link">&para;</a></h2>
+<p><a href="storage/">Storage</a> covers S3, Google Cloud, Azure, and SFTP. <a href="configuration/">Settings</a>
+lists every option, like which databases to back up and how many old backups to keep.
+<a href="usage/">Usage</a> has the full command list and a short FAQ.</p>
 
 
 

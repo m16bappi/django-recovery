@@ -655,7 +655,7 @@
 <tr>
 <td><code>RETENTION</code></td>
 <td><code>{}</code></td>
-<td>How many old backups to keep — see below.</td>
+<td>How many old backups to keep (see below).</td>
 </tr>
 <tr>
 <td><code>HOST</code></td>
@@ -675,7 +675,7 @@
 <tr>
 <td><code>TUNING</code></td>
 <td><code>{}</code></td>
-<td>Speed options — see below.</td>
+<td>Speed options (see below).</td>
 </tr>
 <tr>
 <td><code>EXTRA_ARGS</code></td>
@@ -684,8 +684,8 @@
 </tr>
 </tbody>
 </table>
-<p>Typos and unknown options stop every <code>recovery</code> command with an <code>ImproperlyConfigured</code>
-error, so mistakes show up before any backup runs.</p>
+<p>If you misspell an option, every <code>recovery</code> command stops with an <code>ImproperlyConfigured</code>
+error. Better to find out now than when a backup quietly does the wrong thing.</p>
 <h2 id="password">Password<a class="headerlink" href="#password" title="Permanent link">&para;</a></h2>
 <p>Pick one:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="s2">"PASSWORD"</span><span class="p">:</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="p">[</span><span class="s2">"RESTIC_PASSWORD"</span><span class="p">],</span>         <span class="c1"># from an environment variable</span>
@@ -694,7 +694,7 @@ error, so mistakes show up before any backup runs.</p>
 <p>Or set neither, and restic reads <code>RESTIC_PASSWORD</code> from the environment itself.</p>
 <div class="admonition danger">
 <p class="admonition-title">Danger</p>
-<p>Lost password = lost backups. There is no reset.</p>
+<p>If you lose the password, the backups are gone for good. There's no reset.</p>
 </div>
 <h2 id="keeping-old-backups">Keeping old backups<a class="headerlink" href="#keeping-old-backups" title="Permanent link">&para;</a></h2>
 <p><code>RETENTION</code> decides which backups <code>recovery prune</code> keeps:</p>
@@ -708,7 +708,8 @@ error, so mistakes show up before any backup runs.</p>
 newer than, for example, <code>"7d"</code>). Each database and the media files are counted
 separately, so one never pushes out another.</p>
 <h2 id="speed">Speed<a class="headerlink" href="#speed" title="Permanent link">&para;</a></h2>
-<p>All optional. They map directly to restic options:</p>
+<p>You can skip this section. The defaults are fine for most projects, but if backups are
+slow or use too much bandwidth, these map straight to restic's own options:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="s2">"TUNING"</span><span class="p">:</span> <span class="p">{</span>
 <a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>    <span class="s2">"compression"</span><span class="p">:</span> <span class="s2">"auto"</span><span class="p">,</span>   <span class="c1"># auto, off, fastest, better, max</span>
 <a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>    <span class="s2">"pack_size"</span><span class="p">:</span> <span class="mi">16</span><span class="p">,</span>         <span class="c1"># MiB; try 64 for big databases</span>
