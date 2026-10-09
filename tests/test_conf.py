@@ -77,6 +77,20 @@ def test_recovery_missing_entirely_raises():
             get_config()
 
 
+@pytest.mark.parametrize("key", ["DATABASES", "TAGS", "MEDIA_EXCLUDE", "EXTRA_ARGS"])
+@pytest.mark.parametrize("value", ["default", ["ok", 3], {"a": 1}])
+def test_list_settings_reject_non_string_lists(key, value):
+    # A bare string must not be split into characters.
+    with override_settings(RECOVERY=_local(**{key: value})):
+        with pytest.raises(ImproperlyConfigured, match=f"{key}.*list of strings"):
+            get_config()
+
+
+def test_list_settings_accept_tuples():
+    with override_settings(RECOVERY=_local(DATABASES=("default", "analytics"))):
+        assert get_config().databases == ["default", "analytics"]
+
+
 def test_operational_keys_parsed():
     with override_settings(
         RECOVERY=_local(

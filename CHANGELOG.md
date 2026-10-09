@@ -4,6 +4,22 @@ All notable changes to django-recovery are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- PostgreSQL restore runs `psql --single-transaction`: a failed restore now
+  rolls back instead of leaving a half-dropped database.
+- `DATABASES`, `TAGS`, `MEDIA_EXCLUDE`, and `EXTRA_ARGS` must be lists of
+  strings; a bare string raises `ImproperlyConfigured` instead of being split
+  into characters.
+- `manage.py recovery` reports configuration, restic, and missing-binary
+  errors as a one-line `CommandError` (exit code 1) instead of a traceback.
+- An unknown database alias (e.g. `--database typo`) names the valid aliases
+  instead of raising a bare `KeyError`.
+- MySQL: a `HOST` starting with `/` is passed as `--socket` (Django's Unix
+  socket convention) instead of `-h`.
+
 ## [1.0.0b1] - 2026-10-09
 
 ### Changed

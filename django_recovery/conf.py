@@ -105,6 +105,25 @@ def _validate_tuning(raw: dict) -> dict:
     return dict(raw)
 
 
+def _str_list(raw: dict, key: str) -> list[str]:
+    """``RECOVERY[key]`` as a list of strings (``[]`` when unset).
+
+    A bare string is rejected rather than silently split into characters
+    (``list("default")`` would be ``['d', 'e', ...]``).
+    """
+    value = raw.get(key)
+    if value is None:
+        return []
+    if not isinstance(value, (list, tuple)) or not all(
+        isinstance(item, str) for item in value
+    ):
+        raise ImproperlyConfigured(
+            f"RECOVERY[{key!r}] must be a list of strings, e.g. [\"value\"]; "
+            f"got {value!r}."
+        )
+    return list(value)
+
+
 def _build_repository(raw: dict) -> Repository:
     """Derive the repository from the ``settings.STORAGES`` alias in ``STORAGE``."""
     from django.core.files.storage import InvalidStorageError, storages
@@ -131,8 +150,8 @@ def get_config() -> RecoveryConfig:
 
     Raises:
         ImproperlyConfigured: if ``RECOVERY`` is absent, ``STORAGE`` is
-            missing, or the storage alias is unknown or cannot be mapped to
-            a restic repository.
+            missing, the storage alias is unknown or cannot be mapped to a
+            restic repository, or a list setting is not a list of strings.
     """
     raw = getattr(settings, "RECOVERY", None)
     if not raw:
@@ -155,13 +174,11 @@ def get_config() -> RecoveryConfig:
             "'PASSWORD_FILE', not both."
         )
 
-    databases = raw.get("DATABASES") or ["default"]
-
     return RecoveryConfig(
         repository=repository,
-        databases=list(databases),
+        databases=_str_list(raw, "DATABASES") or ["default"],
         media=bool(raw.get("MEDIA", False)),
-        tags=list(raw.get("TAGS") or []),
+        tags=_str_list(raw, "TAGS"),
         binary=raw.get("BINARY"),
         password=raw.get("PASSWORD"),
         password_file=raw.get("PASSWORD_FILE"),
@@ -169,8 +186,8 @@ def get_config() -> RecoveryConfig:
         tuning=_validate_tuning(raw.get("TUNING") or {}),
         host=raw.get("HOST"),
         skip_if_unchanged=bool(raw.get("SKIP_IF_UNCHANGED", False)),
-        media_exclude=list(raw.get("MEDIA_EXCLUDE") or []),
-        extra_args=list(raw.get("EXTRA_ARGS") or []),
+        media_exclude=_str_list(raw, "MEDIA_EXCLUDE"),
+        extra_args=_str_list(raw, "EXTRA_ARGS"),
     )
 
 

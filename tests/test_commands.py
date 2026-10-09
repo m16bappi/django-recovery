@@ -18,12 +18,13 @@ on a subparser are forwarded as keyword arguments (``database=...``,
 from unittest.mock import MagicMock
 
 import pytest
+from django.core.exceptions import ImproperlyConfigured
 from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.test import override_settings
 
 from django_recovery import services
-from django_recovery.restic import Snapshot
+from django_recovery.restic import ResticError, Snapshot
 
 RECOVERY_WITH_RETENTION = {
     "STORAGE": "recovery",
@@ -190,3 +191,31 @@ def test_prune_dry_run_skips_prompt(monkeypatch):
 
     fake.assert_called_once()
     assert fake.call_args.kwargs["dry_run"] is True
+
+
+# --- error reporting ------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        ResticError(1, "Fatal: unable to open config file"),
+        FileNotFoundError(2, "No such file or directory", "psql"),
+        ImproperlyConfigured("settings.RECOVERY['STORAGE'] is required"),
+        ValueError("snapshot nope not found"),
+    ],
+)
+def test_expected_errors_become_command_error(monkeypatch, exc):
+    monkeypatch.setattr(services, "run_backup", MagicMock(side_effect=exc))
+
+    with pytest.raises(CommandError) as info:
+        call_command("recovery", "backup")
+    assert str(info.value) == str(exc)
+    assert info.value.__cause__ is exc
+
+
+def test_unexpected_errors_are_not_masked(monkeypatch):
+    # Programming errors keep their traceback.
+    monkeypatch.setattr(services, "run_backup", MagicMock(side_effect=TypeError("bug")))
+
+    with pytest.raises(TypeError):
+        call_command("recovery", "backup")

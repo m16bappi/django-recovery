@@ -12,29 +12,31 @@ class MySQL(BaseConnector):
     appears in argv.
     """
 
-    def dump_command(self) -> list[str]:
+    def _connection_args(self) -> list[str]:
         s = self.settings_dict
-        cmd = ["mysqldump", "--single-transaction", "--routines"]
-        if s.get("HOST"):
-            cmd += ["-h", s["HOST"]]
-        if s.get("PORT"):
-            cmd += ["-P", str(s["PORT"])]
+        args: list[str] = []
+        host = s.get("HOST")
+        if host and str(host).startswith("/"):
+            # Django's convention: a HOST starting with "/" is a Unix socket
+            # path. The port is meaningless for a socket connection.
+            args += ["--socket", str(host)]
+        else:
+            if host:
+                args += ["-h", host]
+            if s.get("PORT"):
+                args += ["-P", str(s["PORT"])]
         if s.get("USER"):
-            cmd += ["-u", s["USER"]]
-        cmd += [s["NAME"]]
-        return cmd
+            args += ["-u", s["USER"]]
+        return args
+
+    def dump_command(self) -> list[str]:
+        return [
+            "mysqldump", "--single-transaction", "--routines",
+            *self._connection_args(), self.settings_dict["NAME"],
+        ]
 
     def restore_command(self) -> list[str]:
-        s = self.settings_dict
-        cmd = ["mysql"]
-        if s.get("HOST"):
-            cmd += ["-h", s["HOST"]]
-        if s.get("PORT"):
-            cmd += ["-P", str(s["PORT"])]
-        if s.get("USER"):
-            cmd += ["-u", s["USER"]]
-        cmd += [s["NAME"]]
-        return cmd
+        return ["mysql", *self._connection_args(), self.settings_dict["NAME"]]
 
     def extra_env(self) -> dict[str, str]:
         password = self.settings_dict.get("PASSWORD")

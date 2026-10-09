@@ -5,13 +5,21 @@ argparse subparsers. Each subcommand is a thin wrapper over the shared
 :mod:`django_recovery.services` layer; progress strings are written to
 ``self.stdout`` via a ``log_callback``. Destructive operations (``restore``,
 ``remove``) prompt for confirmation unless ``--noinput`` is given.
+
+Expected failures (bad settings, restic or a dump/restore client failing, a
+missing binary) are reported as ``CommandError`` — one clean line and exit
+code 1 instead of a traceback. ``--traceback`` still shows the cause.
 """
 
 from __future__ import annotations
 
+from django.core.exceptions import ImproperlyConfigured
 from django.core.management.base import BaseCommand, CommandError
 
 from django_recovery import services
+
+# ResticError is a RuntimeError; OSError covers a missing restic/psql binary.
+_EXPECTED_ERRORS = (ImproperlyConfigured, ValueError, RuntimeError, OSError)
 
 
 class Command(BaseCommand):
@@ -74,6 +82,12 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **opts):
+        try:
+            self._dispatch(opts)
+        except _EXPECTED_ERRORS as exc:
+            raise CommandError(str(exc)) from exc
+
+    def _dispatch(self, opts):
         subcommand = opts.get("subcommand")
         log = lambda message: self.stdout.write(message)  # noqa: E731
 

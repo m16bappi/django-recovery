@@ -30,9 +30,15 @@ _ENGINE_MAP = {
 def get_connector(alias: str) -> BaseConnector:
     """Return the connector instance for ``settings.DATABASES[alias]``.
 
-    Raises :class:`NotImplementedError` (including the engine string) when the
-    database engine has no connector.
+    Raises :class:`ValueError` for an alias missing from ``settings.DATABASES``
+    (e.g. a typo in ``--database``), and :class:`NotImplementedError`
+    (including the engine string) when the database engine has no connector.
     """
+    if alias not in settings.DATABASES:
+        raise ValueError(
+            f"unknown database {alias!r}; settings.DATABASES has: "
+            f"{', '.join(sorted(settings.DATABASES))}"
+        )
     settings_dict = settings.DATABASES[alias]
     engine = settings_dict["ENGINE"]
     connector_cls = _ENGINE_MAP.get(engine.rsplit(".", 1)[-1])

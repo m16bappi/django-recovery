@@ -36,7 +36,7 @@ def test_postgres_restore_command():
     })
     assert c.restore_command() == [
         "psql", "-h", "localhost", "-p", "5432", "-U", "app",
-        "-d", "appdb", "-v", "ON_ERROR_STOP=1",
+        "-d", "appdb", "-v", "ON_ERROR_STOP=1", "--single-transaction",
     ]
 
 
@@ -67,6 +67,7 @@ def test_postgres_omits_host_and_port_when_empty():
     ]
     assert c.restore_command() == [
         "psql", "-U", "app", "-d", "appdb", "-v", "ON_ERROR_STOP=1",
+        "--single-transaction",
     ]
 
 
@@ -243,3 +244,22 @@ def test_get_connector_unknown_engine_raises():
     with pytest.raises(NotImplementedError) as exc:
         get_connector("default")
     assert "django.db.backends.oracle" in str(exc.value)
+
+
+def test_get_connector_unknown_alias_raises_value_error():
+    with pytest.raises(ValueError, match="unknown database 'typo'.*default"):
+        get_connector("typo")
+
+
+def test_mysql_unix_socket_host_uses_socket_flag():
+    c = MySQL("default", {
+        "NAME": "appdb", "USER": "app", "PASSWORD": "",
+        "HOST": "/var/run/mysqld/mysqld.sock", "PORT": "3306",
+    })
+    assert c.dump_command() == [
+        "mysqldump", "--single-transaction", "--routines",
+        "--socket", "/var/run/mysqld/mysqld.sock", "-u", "app", "appdb",
+    ]
+    assert c.restore_command() == [
+        "mysql", "--socket", "/var/run/mysqld/mysqld.sock", "-u", "app", "appdb",
+    ]
