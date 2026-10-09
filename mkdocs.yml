@@ -33,19 +33,10 @@ theme:
     - search.highlight
 
 nav:
-  - Getting started:
-      - Installation: installation.md
-      - Quickstart: quickstart.md
-  - Configuration:
-      - Settings reference: configuration.md
-      - Storage: storage.md
-  - Usage:
-      - Management commands: commands.md
-      - Scheduling backups: scheduling.md
-  - Reference:
-      - How it works: how-it-works.md
-      - Supported databases: databases.md
-      - FAQ: faq.md
+  - Home: index.md
+  - Storage: storage.md
+  - Settings: configuration.md
+  - Usage: usage.md
 
 markdown_extensions:
   - admonition
@@ -64,6 +55,10 @@ plugins:
   - search
 
 extra:
+  version:
+    provider: mike   # version menu; see .github/workflows/docs.yml
+    default: latest  # banner on other versions
+    alias: true
   social:
     - icon: fontawesome/brands/github
       link: https://github.com/m16bappi/django-recovery
