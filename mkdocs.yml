@@ -38,7 +38,7 @@ nav:
       - Quickstart: quickstart.md
   - Configuration:
       - Settings reference: configuration.md
-      - Storage backends: backends.md
+      - Storage: storage.md
   - Usage:
       - Management commands: commands.md
       - Scheduling backups: scheduling.md

@@ -4,6 +4,53 @@ All notable changes to django-recovery are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [1.0.0b1] - 2026-10-09
+
+### Changed
+
+- 1.0 beta: the `STORAGE`-based configuration is the intended 1.0 API.
+  Please report issues before the stable 1.0.0 release.
+- **Breaking:** the repository is configured from a Django `STORAGES` alias.
+  `RECOVERY['BACKEND']` is removed; set `RECOVERY['STORAGE']` to the alias
+  instead. Credentials and bucket settings are read from the storage
+  (including global `AWS_*` / `GS_*` / `AZURE_*` / `SFTP_*` settings).
+
+  ```python
+  # before
+  RECOVERY = {"BACKEND": "django_recovery.backends.S3Backend",
+              "OPTIONS": {"bucket_name": "b", "access_key": "...", "secret_key": "..."}}
+  # after
+  STORAGES = {..., "backups": {"BACKEND": "storages.backends.s3.S3Storage",
+                                "OPTIONS": {"bucket_name": "b"}}}
+  RECOVERY = {"STORAGE": "backups"}
+  ```
+
+  Supported: Django's `FileSystemStorage` and django-storages' `S3Storage`,
+  `GoogleCloudStorage`, `AzureStorage`, `SFTPStorage` (and subclasses).
+- **Breaking:** `RECOVERY['OPTIONS']` is removed. For a different prefix,
+  define a separate `STORAGES` alias (e.g. `"OPTIONS": {"location": "restic"}`).
+- **Breaking:** the `django_recovery.backends` package (`LocalBackend`,
+  `S3Backend`, `GCSBackend`, `AzureBackend`, `SFTPBackend`, `GenericBackend`)
+  is removed; `django_recovery.storage` derives the repository directly from
+  the storage. rclone, rest-server, Swift, and raw repository URLs are no
+  longer supported.
+- S3 no longer requires `access_key`/`secret_key`: with neither, restic uses
+  the AWS default credential chain (IAM roles, instance profiles).
+
+### Added
+
+- S3 `session_profile` (`AWS_PROFILE`) and Azure `endpoint_suffix`
+  (`AZURE_ENDPOINT_SUFFIX`) support.
+
+### Fixed
+
+- S3 `endpoint_url` keeps an explicit `http://` scheme, so plain-HTTP
+  endpoints (local MinIO) no longer silently switch to HTTPS.
+- SFTP repositories with a `port` turned absolute paths into relative ones;
+  they now produce restic's `sftp://host:port//abs/path` form.
+- A `FileSystemStorage` location inside `MEDIA_ROOT` is rejected (it would be
+  web-served and included in its own media backup).
+
 ## [0.3.0b1] - 2026-07-17
 
 ### Changed
@@ -80,6 +127,8 @@ All notable changes to django-recovery are documented here. The format follows
 - `manage.py recovery` command: `init`, `backup`, `restore`, `snapshots`,
   `remove`.
 
+[1.0.0b1]: https://github.com/m16bappi/django-recovery/releases/tag/v1.0.0b1
+[0.3.0b1]: https://github.com/m16bappi/django-recovery/releases/tag/v0.3.0b1
 [0.2.0]: https://github.com/m16bappi/django-recovery/releases/tag/v0.2.0
 [0.1.2]: https://github.com/m16bappi/django-recovery/releases/tag/v0.1.2
 [0.1.1]: https://github.com/m16bappi/django-recovery/releases/tag/v0.1.1

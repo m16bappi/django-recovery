@@ -1,8 +1,8 @@
 # Quickstart
 
 Five minutes from zero to a restorable, encrypted backup. This walkthrough uses a local
-directory repository; swap the backend for S3/GCS/Azure later without touching anything
-else — see [Storage backends](backends.md).
+directory repository; point it at an S3/GCS/Azure/SFTP storage later without touching
+anything else — see [Storage](storage.md).
 
 ## 1. Configure
 
@@ -10,11 +10,16 @@ else — see [Storage backends](backends.md).
 # settings.py
 import os
 
-RECOVERY = {
-    "BACKEND": "django_recovery.backends.LocalBackend",
-    "OPTIONS": {
-        "path": "/var/backups/myapp-restic",
+STORAGES = {
+    # ... your existing "default" and "staticfiles" entries ...
+    "backups": {
+        "BACKEND": "django.core.files.storage.FileSystemStorage",
+        "OPTIONS": {"location": "/var/backups/myapp-restic"},
     },
+}
+
+RECOVERY = {
+    "STORAGE": "backups",       # the STORAGES alias holding the repository
     "PASSWORD": os.environ["RESTIC_PASSWORD"],
     "DATABASES": ["default"],   # DATABASES aliases to back up
     "MEDIA": False,             # also back up settings.MEDIA_ROOT
@@ -22,9 +27,10 @@ RECOVERY = {
 }
 ```
 
-The backend class builds everything the restic subprocess needs — repository URL and
-credential environment — from `OPTIONS`. Pull secrets into `OPTIONS` however you like:
-`os.environ`, `django-environ`, a secrets manager.
+django-recovery reads the repository location (and, for cloud storages, the
+credentials) from that `STORAGES` alias. Moving to S3 later means pointing the alias at
+a django-storages backend — `RECOVERY` stays the same. Keep the directory outside
+`MEDIA_ROOT`; django-recovery refuses a repository inside it.
 
 !!! danger "The repository password is unrecoverable"
     Losing it means losing the backups — no reset, no backdoor. Store it durably and

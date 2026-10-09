@@ -2,7 +2,7 @@
 
 This module never transforms backup data; it only *constructs* argv lists and
 runs the restic binary. Passwords are never placed in argv or in exception
-text: the configured backend supplies ``RESTIC_PASSWORD`` /
+text: the configured storage supplies ``RESTIC_PASSWORD`` /
 ``RESTIC_PASSWORD_FILE`` and cloud credentials via ``extra_env``, which is
 merged into the subprocess environment only.
 """
@@ -83,7 +83,7 @@ class Restic:
         """Build the subprocess environment.
 
         ``os.environ`` is copied and then overlaid with ``extra_env`` from the
-        configured backend (``RESTIC_PASSWORD``/``RESTIC_PASSWORD_FILE`` plus
+        configured storage (``RESTIC_PASSWORD``/``RESTIC_PASSWORD_FILE`` plus
         cloud credentials). The overlay wins over inherited shell variables so
         behaviour is deterministic regardless of the caller's environment.
         Values in ``extra_env`` never appear in argv or exception text.

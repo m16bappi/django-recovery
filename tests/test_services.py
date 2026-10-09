@@ -14,14 +14,14 @@ import pytest
 from django.test import override_settings
 
 from django_recovery import services
-from django_recovery.backends import LocalBackend
 from django_recovery.conf import RecoveryConfig
 from django_recovery.restic import Snapshot
+from django_recovery.storage import Repository
 
 
 def _config(*, databases=("default",), media=False, tags=("test",), **extra):
     return RecoveryConfig(
-        backend=LocalBackend(path="/repo"),
+        repository=Repository(url="/repo"),
         password="test-password",
         databases=list(databases),
         media=media,

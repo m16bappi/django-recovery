@@ -56,11 +56,19 @@ USE_TZ = True
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-RECOVERY = {
-    "BACKEND": "django_recovery.backends.LocalBackend",
-    "OPTIONS": {
-        "path": "/tmp/test-repo",
+STORAGES = {
+    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+    "staticfiles": {
+        "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
     },
+    "recovery": {
+        "BACKEND": "django.core.files.storage.FileSystemStorage",
+        "OPTIONS": {"location": "/tmp/test-repo"},
+    },
+}
+
+RECOVERY = {
+    "STORAGE": "recovery",
     "PASSWORD": "test-password",
     "DATABASES": ["default"],
     "MEDIA": False,

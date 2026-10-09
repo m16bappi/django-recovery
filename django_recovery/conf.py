@@ -1,11 +1,9 @@
 """Settings parsing/validation and restic binary resolution.
 
-``settings.RECOVERY`` follows the Django ``STORAGES`` shape: a ``BACKEND``
-dotted path to a :class:`~django_recovery.backends.base.BaseBackend`
-subclass plus an ``OPTIONS`` dict passed to it as keyword arguments. The
-backend builds the restic repository URL and the credential environment;
-operational keys (``DATABASES``, ``MEDIA``, ``TAGS``, ``BINARY``) stay
-top-level.
+``settings.RECOVERY['STORAGE']`` names a ``settings.STORAGES`` alias; the
+restic repository URL and credential environment are derived from that
+storage's resolved settings (see :mod:`django_recovery.storage`). Operational
+keys (``DATABASES``, ``MEDIA``, ``TAGS``, ``BINARY``) stay top-level.
 """
 
 from __future__ import annotations
@@ -15,9 +13,8 @@ from dataclasses import dataclass, field
 
 from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
-from django.utils.module_loading import import_string
 
-from .backends.base import BaseBackend
+from .storage import Repository, repository_from_storage
 from .types import RecoverySettings, RetentionOptions, TuningOptions
 
 # Key sets derive from the TypedDicts in .types — the static shape users
@@ -33,7 +30,7 @@ _COMPRESSION_MODES = {"auto", "off", "fastest", "better", "max"}
 class RecoveryConfig:
     """Validated view of ``settings.RECOVERY``."""
 
-    backend: BaseBackend
+    repository: Repository
     databases: list[str]
     media: bool = False
     tags: list[str] = field(default_factory=list)
@@ -48,13 +45,13 @@ class RecoveryConfig:
     extra_args: list[str] = field(default_factory=list)
 
     def restic_env(self) -> dict[str, str]:
-        """Env overlay for restic: backend credentials + repository password.
+        """Env overlay for restic: storage credentials + repository password.
 
         With neither ``PASSWORD`` nor ``PASSWORD_FILE`` configured, no
         password key is added — restic reads ``RESTIC_PASSWORD`` /
         ``RESTIC_PASSWORD_FILE`` from the inherited process environment.
         """
-        env = self.backend.env()
+        env = dict(self.repository.env)
         if self.password:
             env["RESTIC_PASSWORD"] = self.password
         elif self.password_file:
@@ -108,13 +105,34 @@ def _validate_tuning(raw: dict) -> dict:
     return dict(raw)
 
 
+def _build_repository(raw: dict) -> Repository:
+    """Derive the repository from the ``settings.STORAGES`` alias in ``STORAGE``."""
+    from django.core.files.storage import InvalidStorageError, storages
+
+    alias = raw.get("STORAGE")
+    if not alias:
+        raise ImproperlyConfigured(
+            "settings.RECOVERY['STORAGE'] is required: the settings.STORAGES "
+            "alias to keep backups in, e.g. 'backups'."
+        )
+    try:
+        storage = storages[alias]
+    except InvalidStorageError as exc:
+        # Covers unknown aliases and storage classes that fail to import
+        # (django-storages or its provider SDK not installed).
+        raise ImproperlyConfigured(
+            f"RECOVERY['STORAGE'] {alias!r} could not be loaded: {exc}"
+        ) from exc
+    return repository_from_storage(storage)
+
+
 def get_config() -> RecoveryConfig:
     """Read and validate ``settings.RECOVERY`` into a :class:`RecoveryConfig`.
 
     Raises:
-        ImproperlyConfigured: if ``RECOVERY`` is absent, ``BACKEND`` is
-            missing, the backend class cannot be imported or is not a
-            ``BaseBackend`` subclass, or the backend rejects ``OPTIONS``.
+        ImproperlyConfigured: if ``RECOVERY`` is absent, ``STORAGE`` is
+            missing, or the storage alias is unknown or cannot be mapped to
+            a restic repository.
     """
     raw = getattr(settings, "RECOVERY", None)
     if not raw:
@@ -129,26 +147,7 @@ def get_config() -> RecoveryConfig:
             f"Valid keys: {', '.join(sorted(_KNOWN_KEYS))}."
         )
 
-    backend_path = raw.get("BACKEND")
-    if not backend_path:
-        raise ImproperlyConfigured(
-            "settings.RECOVERY['BACKEND'] is required, e.g. "
-            "'django_recovery.backends.LocalBackend'."
-        )
-
-    try:
-        backend_cls = import_string(backend_path)
-    except ImportError as exc:
-        raise ImproperlyConfigured(
-            f"Could not import RECOVERY['BACKEND'] {backend_path!r}: {exc}"
-        ) from exc
-    if not (isinstance(backend_cls, type) and issubclass(backend_cls, BaseBackend)):
-        raise ImproperlyConfigured(
-            f"RECOVERY['BACKEND'] {backend_path!r} is not a BaseBackend subclass."
-        )
-
-    options = raw.get("OPTIONS") or {}
-    backend = backend_cls(**options)
+    repository = _build_repository(raw)
 
     if raw.get("PASSWORD") and raw.get("PASSWORD_FILE"):
         raise ImproperlyConfigured(
@@ -159,7 +158,7 @@ def get_config() -> RecoveryConfig:
     databases = raw.get("DATABASES") or ["default"]
 
     return RecoveryConfig(
-        backend=backend,
+        repository=repository,
         databases=list(databases),
         media=bool(raw.get("MEDIA", False)),
         tags=list(raw.get("TAGS") or []),
@@ -203,11 +202,11 @@ def build_global_args(config: RecoveryConfig) -> list[str]:
     if tuning.get("no_cache"):
         args += ["--no-cache"]
     if tuning.get("connections"):
-        scheme = config.backend.repository.split(":", 1)[0]
+        scheme = config.repository.url.split(":", 1)[0]
         if scheme in _REPO_SCHEMES:
             args += ["-o", f"{scheme}.connections={tuning['connections']}"]
         # bare local paths (incl. Windows drive letters) have no scheme to scope
-        # the option to; restic's local backend ignores it anyway.
+        # the option to; restic's local repository ignores it anyway.
     args += config.extra_args
     return args
 

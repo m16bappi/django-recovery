@@ -7,5 +7,5 @@ def test_app_installed():
 
 
 def test_recovery_setting_present():
-    assert settings.RECOVERY["BACKEND"] == "django_recovery.backends.LocalBackend"
-    assert settings.RECOVERY["OPTIONS"]["path"] == "/tmp/test-repo"
+    assert settings.RECOVERY["STORAGE"] == "recovery"
+    assert settings.STORAGES["recovery"]["OPTIONS"]["location"] == "/tmp/test-repo"
