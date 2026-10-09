@@ -1,22 +1,20 @@
-"""Derive the restic repository from a configured Django ``Storage``.
+"""Turn a Django storage into the restic repository it points at.
 
-``RECOVERY['STORAGE']`` names a ``settings.STORAGES`` alias. The storage
-instance Django resolves for it already merges that alias' ``OPTIONS`` with
-the global ``AWS_*`` / ``GS_*`` / ``AZURE_*`` / ``SFTP_*`` settings (or, for
-Django's own ``FileSystemStorage``, ``MEDIA_ROOT``), so its attributes are the
-effective connection details. This module only *reads* them and builds the
-restic repository URL plus the credential environment; restic still performs
-all I/O.
+When Django builds a storage from ``STORAGES``, it fills in everything: the
+alias' own ``OPTIONS`` plus global settings like ``AWS_*``. So we just read the
+storage's attributes and translate them into a restic address and the
+environment variables restic needs. restic still does all the reading and
+writing; we never call the storage's own methods.
 
-Storage classes are matched by dotted path along the instance's MRO, so
-``storages`` is never imported here and user subclasses (``class
-MediaStorage(S3Storage)``) and the ``S3Boto3Storage`` alias match too.
-Settings with no restic equivalent raise ``ImproperlyConfigured`` rather than
-being silently dropped — a backup silently going somewhere else, or with a
-different identity, is worse than a clear error.
+We recognise storage classes by name, so django-storages is never imported
+here, and your own subclasses (``class MediaStorage(S3Storage)``) work too.
 
-Credentials are only ever placed in the returned env — never in the URL
-(which lands in argv) and never in exception text.
+If a storage uses a setting restic can't honour, we stop with an error instead
+of ignoring it. A backup quietly going to the wrong place, or logging in as
+someone else, is far worse than a clear message.
+
+Credentials only ever go into the environment, never into the address (which
+ends up on the command line) or into an error message.
 """
 
 from __future__ import annotations
@@ -35,7 +33,7 @@ _DEFAULT_AZURE_SUFFIX = "core.windows.net"
 
 @dataclass(frozen=True)
 class Repository:
-    """A restic ``-r`` repository URL plus the env vars needed to reach it."""
+    """Where restic should store backups (``url``) and how to log in (``env``)."""
 
     url: str
     env: dict[str, str] = field(default_factory=dict)
@@ -69,8 +67,8 @@ def _prefixed(base: str, location: str | None) -> str:
 def _filesystem(storage) -> Repository:
     path = storage.location
     media_root = settings.MEDIA_ROOT
-    # FileSystemStorage defaults to MEDIA_ROOT. A repository there would be
-    # served under MEDIA_URL and swept into its own backup when MEDIA is on.
+    # FileSystemStorage defaults to MEDIA_ROOT. Backups in there would be
+    # publicly served under MEDIA_URL, and with MEDIA on, back themselves up.
     if media_root and Path(path).resolve().is_relative_to(Path(media_root).resolve()):
         raise ImproperlyConfigured(
             f"RECOVERY['STORAGE'] resolves to {path!r}, inside MEDIA_ROOT. Give "
@@ -87,10 +85,9 @@ def _s3(storage) -> Repository:
             "(AWS default credential chain)."
         )
     endpoint = storage.endpoint_url or _DEFAULT_S3_ENDPOINT
-    # restic defaults to HTTPS; an explicit http:// must survive so plain
-    # HTTP endpoints (e.g. local MinIO) keep working.
+    # restic assumes HTTPS, so plain-HTTP endpoints (a local MinIO, say) must
+    # keep an explicit http://. AWS_S3_USE_SSL=False means the same thing.
     if "://" not in endpoint and not getattr(storage, "use_ssl", True):
-        # AWS_S3_USE_SSL=False with a scheme-less endpoint means plain HTTP.
         endpoint = f"http://{endpoint}"
     endpoint = endpoint.removeprefix("https://").rstrip("/")
     env = {}
@@ -111,8 +108,8 @@ def _gcs(storage) -> Repository:
     _require(storage, "bucket_name")
     if storage.custom_endpoint:
         raise _unsupported(storage, "custom_endpoint", "Use the default GCS endpoint.")
-    # ``credentials`` is a google-auth object; restic can only read a key file
-    # (GOOGLE_APPLICATION_CREDENTIALS) or use Application Default Credentials.
+    # GS_CREDENTIALS is a Python object restic can't use. restic needs a key
+    # file (GOOGLE_APPLICATION_CREDENTIALS) or the machine's own credentials.
     if storage.credentials is not None and not os.environ.get(
         "GOOGLE_APPLICATION_CREDENTIALS"
     ):
@@ -173,13 +170,14 @@ def _sftp(storage) -> Repository:
     user, port = params.get("username"), params.get("port")
     host = f"{user}@{storage.host}" if user else storage.host
     if port:
-        # URL form: the path after the first "/" is relative to the login
-        # home, so an absolute path yields "//abs" (restic's convention).
+        # In this form, the path after host:port/ is relative to the user's
+        # home folder, so an absolute path ends up as "//srv/...". That's how
+        # restic wants it.
         return Repository(url=f"sftp://{host}:{port}/{storage.root_path}")
     return Repository(url=f"sftp:{host}:{storage.root_path}")
 
 
-# dotted storage class path -> repository builder
+# Storage class (by full dotted name) -> function that builds its repository.
 _BUILDERS: dict[str, Callable[[object], Repository]] = {
     "django.core.files.storage.filesystem.FileSystemStorage": _filesystem,
     "storages.backends.s3.S3Storage": _s3,
@@ -190,11 +188,10 @@ _BUILDERS: dict[str, Callable[[object], Repository]] = {
 
 
 def repository_from_storage(storage) -> Repository:
-    """Translate a Django storage instance into a restic :class:`Repository`.
+    """The restic :class:`Repository` for a Django storage instance.
 
-    Raises:
-        ImproperlyConfigured: for an unsupported storage class, a storage
-            setting restic cannot honour, or a missing required setting.
+    Raises ``ImproperlyConfigured`` for a storage class we don't support, a
+    setting restic can't honour, or a missing required setting.
     """
     for cls in type(storage).__mro__:
         build = _BUILDERS.get(f"{cls.__module__}.{cls.__qualname__}")

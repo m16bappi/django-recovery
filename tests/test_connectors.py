@@ -97,8 +97,6 @@ def test_stdin_filename(connector, filename):
     assert connector.stdin_filename == filename
 
 
-# --- SQLite scripts, run for real ---------------------------------------------------
-
 def test_sqlite_dump_restore_roundtrip(tmp_path):
     src = create_notes_db(tmp_path / "src.sqlite3", "hello-file")
     dumped = subprocess.run(
@@ -125,8 +123,6 @@ def test_sqlite_dump_fails_on_missing_database(tmp_path):
     assert proc.returncode != 0
     assert "sqlite database not found" in proc.stderr
 
-
-# --- get_connector ---------------------------------------------------------------------
 
 @pytest.mark.parametrize("engine, connector_cls", [
     ("django.db.backends.postgresql", Postgres),

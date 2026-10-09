@@ -1,12 +1,12 @@
-"""PostgreSQL / PostGIS connector (``pg_dump`` / ``psql``)."""
+"""PostgreSQL and PostGIS, using ``pg_dump`` and ``psql``."""
 
 from __future__ import annotations
 
 from .base import BaseConnector
 
-# DATABASES[alias]["OPTIONS"] keys that are libpq connection parameters, and
-# the environment variable pg_dump/psql read them from. Django-only keys
-# (isolation_level, pool, server_side_binding, ...) have no CLI meaning.
+# Connection OPTIONS that pg_dump and psql understand, and the environment
+# variable each one reads. Django-only options (isolation_level, pool, ...)
+# mean nothing to the command-line tools, so they're left out.
 _LIBPQ_ENV = {
     "sslmode": "PGSSLMODE",
     "sslrootcert": "PGSSLROOTCERT",
@@ -22,49 +22,47 @@ _LIBPQ_ENV = {
 
 
 class Postgres(BaseConnector):
-    """Dump/restore a PostgreSQL database via ``pg_dump`` and ``psql``.
+    """Back up with ``pg_dump``, restore with ``psql``.
 
-    The password is passed out-of-band through ``PGPASSWORD`` so it never
-    appears in argv.
+    The password goes in ``PGPASSWORD``, never on the command line.
     """
 
-    def dump_command(self) -> list[str]:
+    def _connection_args(self) -> list[str]:
         s = self.settings_dict
-        cmd = ["pg_dump", "--clean", "--if-exists", "--no-owner"]
+        args: list[str] = []
         if s.get("HOST"):
-            cmd += ["-h", s["HOST"]]
+            args += ["-h", s["HOST"]]
         if s.get("PORT"):
-            cmd += ["-p", str(s["PORT"])]
+            args += ["-p", str(s["PORT"])]
         if s.get("USER"):
-            cmd += ["-U", s["USER"]]
-        cmd += ["-d", s["NAME"]]
-        return cmd
+            args += ["-U", s["USER"]]
+        return args
+
+    def dump_command(self) -> list[str]:
+        return [
+            "pg_dump", "--clean", "--if-exists", "--no-owner",
+            *self._connection_args(), "-d", self.settings_dict["NAME"],
+        ]
 
     def restore_command(self) -> list[str]:
-        s = self.settings_dict
-        cmd = ["psql"]
-        if s.get("HOST"):
-            cmd += ["-h", s["HOST"]]
-        if s.get("PORT"):
-            cmd += ["-p", str(s["PORT"])]
-        if s.get("USER"):
-            cmd += ["-U", s["USER"]]
-        # The dump starts with --clean DROPs: one transaction makes a failed
-        # restore roll back to the original data instead of a half-dropped DB.
-        cmd += ["-d", s["NAME"], "-v", "ON_ERROR_STOP=1", "--single-transaction"]
-        return cmd
+        # The dump starts by dropping tables. Running it as one transaction
+        # means a failed restore rolls back to the original data instead of
+        # leaving a half-empty database.
+        return [
+            "psql", *self._connection_args(), "-d", self.settings_dict["NAME"],
+            "-v", "ON_ERROR_STOP=1", "--single-transaction",
+        ]
 
     def extra_env(self) -> dict[str, str]:
-        """``PGPASSWORD`` plus libpq ``OPTIONS`` (sslmode, service, ...).
+        """``PGPASSWORD`` plus SSL and other connection ``OPTIONS``.
 
-        Without these, an ``sslmode='verify-full'`` database would be dumped
-        over whatever connection libpq negotiates by default.
+        Without these, a database that requires ``sslmode='verify-full'``
+        would be dumped over whatever connection libpq picks by default.
         """
+        options = self.settings_dict.get("OPTIONS") or {}
         env = {
-            var: str(value)
-            for key, var in _LIBPQ_ENV.items()
-            if (value := (self.settings_dict.get("OPTIONS") or {}).get(key))
-            is not None
+            var: str(options[key]) for key, var in _LIBPQ_ENV.items()
+            if options.get(key) is not None
         }
         password = self.settings_dict.get("PASSWORD")
         if password:

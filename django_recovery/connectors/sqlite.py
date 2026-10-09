@@ -1,12 +1,9 @@
-"""SQLite connector: raw database-file backup via Python's ``sqlite3`` module.
+"""SQLite, backed up as the database file itself.
 
-The snapshot stores the full database file (``<alias>.sqlite3``), not a SQL
-text dump. Both directions run small ``python -c`` scripts (same interpreter
-as Django) through restic's stdin pipeline, using
-:meth:`sqlite3.Connection.backup` for a consistent online copy — WAL-safe,
-honours SQLite locking, and needs no ``sqlite3`` CLI. Restore copies the
-snapshot back *into* the live database, so it works with the file present
-and while other connections exist.
+The snapshot holds a copy of the whole file (``<alias>.sqlite3``), not SQL
+text. Both directions run a short Python script with the same interpreter as
+Django, using SQLite's own backup API. That gives a consistent copy even while
+the site is running, and you don't need the ``sqlite3`` command-line tool.
 """
 
 from __future__ import annotations
@@ -15,9 +12,9 @@ import sys
 
 from .base import BaseConnector
 
-# Online-backup the live DB into a temp file, then stream the temp file's raw
-# bytes to stdout for restic. A missing database file is an error — backing
-# up a silently-created empty DB must never produce a "successful" snapshot.
+# Copy the live database into a temp file, then print its bytes for restic.
+# A missing database file is an error: connecting would silently create an
+# empty one, and we'd "successfully" back up nothing.
 _DUMP_SCRIPT = """\
 import os, shutil, sqlite3, sys, tempfile
 db = sys.argv[1]
@@ -37,8 +34,8 @@ finally:
     os.remove(tmp)
 """
 
-# Reverse: spool restic's raw file bytes from stdin to a temp file, then
-# online-backup that temp DB over the live database (created if absent).
+# The reverse: save restic's bytes to a temp file, then copy that over the
+# live database (creating it if it doesn't exist).
 _RESTORE_SCRIPT = """\
 import os, shutil, sqlite3, sys, tempfile
 fd, tmp = tempfile.mkstemp(suffix=".sqlite3")
@@ -57,11 +54,7 @@ finally:
 
 
 class SQLite(BaseConnector):
-    """Back up / restore a SQLite database as its raw file.
-
-    SQLite needs no credentials or network arguments, so :meth:`extra_env`
-    is empty.
-    """
+    """Back up and restore a SQLite database file. No credentials needed."""
 
     def dump_command(self) -> list[str]:
         return [sys.executable, "-c", _DUMP_SCRIPT, str(self.settings_dict["NAME"])]
@@ -74,5 +67,5 @@ class SQLite(BaseConnector):
 
     @property
     def stdin_filename(self) -> str:
-        """Raw file snapshot, so the recorded name is ``<alias>.sqlite3``."""
+        """``<alias>.sqlite3``, because the snapshot holds the database file itself."""
         return f"{self.alias}.sqlite3"

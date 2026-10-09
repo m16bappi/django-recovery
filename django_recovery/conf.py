@@ -1,9 +1,8 @@
-"""Settings parsing/validation and restic binary resolution.
+"""Reads and checks ``settings.RECOVERY``, and finds the restic binary.
 
-``settings.RECOVERY['STORAGE']`` names a ``settings.STORAGES`` alias; the
-restic repository URL and credential environment are derived from that
-storage's resolved settings (see :mod:`django_recovery.storage`). Operational
-keys (``DATABASES``, ``MEDIA``, ``TAGS``, ``BINARY``) stay top-level.
+Where backups go comes from the ``STORAGES`` alias in ``RECOVERY['STORAGE']``
+(see :mod:`django_recovery.storage`). Everything else in ``RECOVERY`` (which
+databases, media, tags, retention, speed options) is read here.
 """
 
 from __future__ import annotations
@@ -17,8 +16,8 @@ from django.core.exceptions import ImproperlyConfigured
 from .storage import Repository, repository_from_storage
 from .types import RecoverySettings, RetentionOptions, TuningOptions
 
-# Key sets derive from the TypedDicts in .types — the static shape users
-# annotate their settings with and the runtime validation can never drift.
+# The allowed keys come straight from the TypedDicts in .types, so the type
+# hints users see and the checks below can't get out of sync.
 _KNOWN_KEYS = frozenset(RecoverySettings.__annotations__)
 _RETENTION_KEYS = frozenset(RetentionOptions.__annotations__)
 _TUNING_KEYS = frozenset(TuningOptions.__annotations__)
@@ -28,7 +27,7 @@ _COMPRESSION_MODES = {"auto", "off", "fastest", "better", "max"}
 
 @dataclass(frozen=True)
 class RecoveryConfig:
-    """Validated view of ``settings.RECOVERY``."""
+    """``settings.RECOVERY`` after it has been checked."""
 
     repository: Repository
     databases: list[str]
@@ -45,11 +44,11 @@ class RecoveryConfig:
     extra_args: list[str] = field(default_factory=list)
 
     def restic_env(self) -> dict[str, str]:
-        """Env overlay for restic: storage credentials + repository password.
+        """Environment variables for restic: storage credentials plus the password.
 
-        With neither ``PASSWORD`` nor ``PASSWORD_FILE`` configured, no
-        password key is added — restic reads ``RESTIC_PASSWORD`` /
-        ``RESTIC_PASSWORD_FILE`` from the inherited process environment.
+        If neither ``PASSWORD`` nor ``PASSWORD_FILE`` is set, no password is
+        added and restic falls back to ``RESTIC_PASSWORD`` /
+        ``RESTIC_PASSWORD_FILE`` from the environment.
         """
         env = dict(self.repository.env)
         if self.password:
@@ -106,10 +105,10 @@ def _validate_tuning(raw: dict) -> dict:
 
 
 def _str_list(raw: dict, key: str) -> list[str]:
-    """``RECOVERY[key]`` as a list of strings (``[]`` when unset).
+    """``RECOVERY[key]`` as a list of strings, or ``[]`` if it isn't set.
 
-    A bare string is rejected rather than silently split into characters
-    (``list("default")`` would be ``['d', 'e', ...]``).
+    A plain string is an error. Otherwise ``"default"`` would quietly turn into
+    ``['d', 'e', 'f', ...]``.
     """
     value = raw.get(key)
     if value is None:
@@ -125,7 +124,7 @@ def _str_list(raw: dict, key: str) -> list[str]:
 
 
 def _build_repository(raw: dict) -> Repository:
-    """Derive the repository from the ``settings.STORAGES`` alias in ``STORAGE``."""
+    """Look up the ``STORAGES`` alias named in ``STORAGE`` and turn it into a repository."""
     from django.core.files.storage import InvalidStorageError, storages
 
     alias = raw.get("STORAGE")
@@ -137,8 +136,8 @@ def _build_repository(raw: dict) -> Repository:
     try:
         storage = storages[alias]
     except InvalidStorageError as exc:
-        # Covers unknown aliases and storage classes that fail to import
-        # (django-storages or its provider SDK not installed).
+        # Unknown alias, or a storage class that can't be imported (for
+        # example django-storages or boto3 isn't installed).
         raise ImproperlyConfigured(
             f"RECOVERY['STORAGE'] {alias!r} could not be loaded: {exc}"
         ) from exc
@@ -146,12 +145,10 @@ def _build_repository(raw: dict) -> Repository:
 
 
 def get_config() -> RecoveryConfig:
-    """Read and validate ``settings.RECOVERY`` into a :class:`RecoveryConfig`.
+    """Read ``settings.RECOVERY``, check it, and return a :class:`RecoveryConfig`.
 
-    Raises:
-        ImproperlyConfigured: if ``RECOVERY`` is absent, ``STORAGE`` is
-            missing, the storage alias is unknown or cannot be mapped to a
-            restic repository, or a list setting is not a list of strings.
+    Any problem raises ``ImproperlyConfigured`` with a message that says what
+    to fix, before a single restic command runs.
     """
     raw = getattr(settings, "RECOVERY", None)
     if not raw:
@@ -197,17 +194,16 @@ def get_config() -> RecoveryConfig:
     )
 
 
-# Repository URL schemes django_recovery.storage can produce; used to scope
-# -o <scheme>.connections (local paths have no scheme).
+# The repository kinds that understand restic's -o <kind>.connections option.
+# Local folders have no "kind:" prefix and ignore it anyway.
 _REPO_SCHEMES = {"s3", "gs", "azure", "sftp"}
 
 
 def build_global_args(config: RecoveryConfig) -> list[str]:
-    """Translate ``RECOVERY['TUNING']`` + ``EXTRA_ARGS`` into restic global flags.
+    """Turn ``TUNING`` and ``EXTRA_ARGS`` into flags added to every restic command.
 
-    Applied to every restic invocation. ``read_concurrency`` is deliberately
-    absent here — it is a ``backup``-only flag and is passed per-call by the
-    service layer.
+    ``read_concurrency`` and ``timeout`` are handled elsewhere: the first only
+    applies to ``backup``, the second isn't a restic flag at all.
     """
     tuning = config.tuning
     args: list[str] = []
@@ -229,23 +225,12 @@ def build_global_args(config: RecoveryConfig) -> list[str]:
         scheme = config.repository.url.split(":", 1)[0]
         if scheme in _REPO_SCHEMES:
             args += ["-o", f"{scheme}.connections={tuning['connections']}"]
-        # bare local paths (incl. Windows drive letters) have no scheme to scope
-        # the option to; restic's local repository ignores it anyway.
     args += config.extra_args
     return args
 
 
 def resolve_binary(config: RecoveryConfig) -> str:
-    """Resolve the path to the restic binary.
-
-    Resolution order:
-        1. ``config.binary`` if explicitly set (returned verbatim).
-        2. ``shutil.which("restic")`` on ``PATH``.
-        3. Otherwise raise :class:`ImproperlyConfigured`.
-
-    restic must be installed on the system (see the project README);
-    django-recovery does not bundle a binary.
-    """
+    """Path to restic: ``RECOVERY['BINARY']`` if set, otherwise the one on ``PATH``."""
     if config.binary:
         return config.binary
 

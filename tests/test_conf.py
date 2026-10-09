@@ -13,8 +13,6 @@ from tests.factories import make_config
 TEST_REPO = os.path.abspath("/tmp/test-repo")  # the testproject "recovery" storage
 
 
-# --- valid settings --------------------------------------------------------------
-
 def test_testproject_settings_parse_with_defaults():
     config = get_config()
     assert config.repository == Repository(url=TEST_REPO)
@@ -60,8 +58,6 @@ def test_password_sources(recovery, overrides, env):
     assert get_config().restic_env() == env
 
 
-# --- invalid settings ----------------------------------------------------------------
-
 LIST_KEYS = ["DATABASES", "TAGS", "MEDIA_EXCLUDE", "EXTRA_ARGS"]
 
 INVALID = [
@@ -99,8 +95,6 @@ def test_missing_recovery_setting_raises(settings):
         get_config()
 
 
-# --- build_global_args ---------------------------------------------------------------
-
 @pytest.mark.parametrize("url, tuning, extra_args, expected", [
     pytest.param("/repo", {}, [], [], id="nothing"),
     pytest.param(
@@ -124,8 +118,6 @@ def test_build_global_args(url, tuning, extra_args, expected):
     assert build_global_args(config) == expected
 
 
-# --- resolve_binary ------------------------------------------------------------------
-
 def test_resolve_binary_prefers_explicit_setting(monkeypatch):
     monkeypatch.setattr(conf.shutil, "which", lambda name: "/usr/bin/restic")
     assert resolve_binary(make_config(binary="/opt/restic")) == "/opt/restic"
@@ -141,8 +133,6 @@ def test_resolve_binary_raises_when_not_found(monkeypatch):
     with pytest.raises(ImproperlyConfigured, match="Could not locate a restic binary"):
         resolve_binary(make_config())
 
-
-# --- settings shape ------------------------------------------------------------------
 
 def test_known_keys_come_from_the_typeddicts():
     from django_recovery.types import RecoverySettings, RetentionOptions, TuningOptions

@@ -62,8 +62,6 @@ DESTRUCTIVE = [
 ]
 
 
-# --- simple pass-through ------------------------------------------------------
-
 def test_init_calls_service(patch_service):
     run_init = patch_service("run_init")
     call_command("recovery", "init")
@@ -89,8 +87,6 @@ def test_snapshots_output(patch_service, capsys, snapshots, expected):
     call_command("recovery", "snapshots")
     assert expected in capsys.readouterr().out
 
-
-# --- confirmations -------------------------------------------------------------------
 
 @pytest.mark.parametrize("args, kwargs, service, confirm", DESTRUCTIVE)
 def test_destructive_command_runs_when_confirmed(
@@ -142,8 +138,6 @@ def test_prune_without_retention_refuses(patch_service, recovery):
         call_command("recovery", "prune", noinput=True)
     run_prune.assert_not_called()
 
-
-# --- error reporting ----------------------------------------------------------------------
 
 @pytest.mark.parametrize("exc", [
     ResticError(1, "Fatal: unable to open config file"),

@@ -1,6 +1,6 @@
-"""Typed shapes for ``settings.RECOVERY``.
+"""Type hints for ``settings.RECOVERY``.
 
-Annotate the setting to get IDE autocomplete and static key/type checking::
+Annotate the setting and your editor will autocomplete keys and flag typos::
 
     from django_recovery.types import RecoverySettings
 
@@ -9,9 +9,8 @@ Annotate the setting to get IDE autocomplete and static key/type checking::
         "PASSWORD": os.environ["RESTIC_PASSWORD"],
     }
 
-These TypedDicts are also the single source of truth for runtime key
-validation: :mod:`django_recovery.conf` derives its known-key sets from their
-annotations, so the static and runtime views can never drift apart.
+:mod:`django_recovery.conf` reads its list of allowed keys from these same
+classes, so the hints and the runtime checks always agree.
 """
 
 from __future__ import annotations
@@ -20,10 +19,10 @@ from typing import Literal, TypedDict
 
 
 class RetentionOptions(TypedDict, total=False):
-    """``RECOVERY['RETENTION']`` — restic ``forget --keep-*`` policy.
+    """``RECOVERY['RETENTION']``: which old backups ``recovery prune`` keeps.
 
-    Counts must be positive integers; ``within`` takes a restic duration
-    string such as ``"7d"`` or ``"2y5m7d3h"``.
+    Counts are positive whole numbers. ``within`` is a restic duration such as
+    ``"7d"`` or ``"2y5m7d3h"``.
     """
 
     last: int
@@ -36,10 +35,10 @@ class RetentionOptions(TypedDict, total=False):
 
 
 class TuningOptions(TypedDict, total=False):
-    """``RECOVERY['TUNING']`` — restic performance flags (1:1 mapping).
+    """``RECOVERY['TUNING']``: speed options, passed straight to restic.
 
-    ``timeout`` is the exception: seconds before django-recovery kills a
-    restic call (not a restic flag). Unset or 0 means no limit.
+    Except ``timeout``, which is ours: how many seconds a restic call may run
+    before we stop it. Leave it unset (or 0) for no limit.
     """
 
     compression: Literal["auto", "off", "fastest", "better", "max"]
@@ -55,13 +54,13 @@ class TuningOptions(TypedDict, total=False):
 
 
 class _RecoveryRequired(TypedDict):
-    # Split base carries the only required key; RecoverySettings layers the
-    # optional ones on top (typing.Required needs 3.11, this works on 3.10).
+    # The one required key. It lives in its own base class because
+    # typing.Required only arrived in Python 3.11.
     STORAGE: str
 
 
 class RecoverySettings(_RecoveryRequired, total=False):
-    """The full ``settings.RECOVERY`` dict. Only ``STORAGE`` is required."""
+    """All of ``settings.RECOVERY``. Only ``STORAGE`` is required."""
 
     PASSWORD: str
     PASSWORD_FILE: str

@@ -4,6 +4,15 @@ All notable changes to django-recovery are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+
+- Service functions default `log_callback` to a no-op instead of `None`.
+  Leave the argument out to skip progress messages; passing `None`
+  explicitly is no longer accepted.
+- Code comments and docstrings rewritten in plain English.
+
 ## [1.0.0b3] - 2026-10-09
 
 ### Added

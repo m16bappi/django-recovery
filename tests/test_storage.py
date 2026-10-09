@@ -57,8 +57,6 @@ S3_KEY_ENV = {"AWS_ACCESS_KEY_ID": "AKIA", "AWS_SECRET_ACCESS_KEY": "shhh"}
 AZ = {"account_name": "acct", "azure_container": "c"}
 
 
-# --- supported storages --------------------------------------------------------
-
 @pytest.mark.parametrize("storage, url, env", [
     # S3
     pytest.param(FakeS3Storage(bucket_name="b", **S3_KEYS),
@@ -120,8 +118,6 @@ def test_filesystem_storage_maps_to_local_repo(tmp_path):
     assert repository_from_storage(storage) == Repository(url=os.path.abspath(tmp_path / "repo"))
 
 
-# --- rejected configurations -----------------------------------------------------------
-
 @pytest.mark.parametrize("storage, match", [
     pytest.param(FakeS3Storage(), "bucket_name", id="s3-no-bucket"),
     pytest.param(FakeS3Storage(bucket_name="b", access_key="a"),
@@ -164,8 +160,6 @@ def test_filesystem_storage_inside_media_root_rejected(settings, tmp_path, locat
         repository_from_storage(storage)
 
 
-# --- through get_config() -------------------------------------------------------------
-
 def test_get_config_uses_the_named_storage(settings, recovery):
     settings.STORAGES = {"backups": {
         "BACKEND": "tests.test_storage.FakeS3Storage",
@@ -188,8 +182,6 @@ def test_get_config_storage_that_cannot_load(settings, recovery, storages, alias
     with pytest.raises(ImproperlyConfigured, match=match):
         get_config()
 
-
-# --- real django-storages ----------------------------------------------------------------
 
 def test_real_s3storage_resolves_global_aws_settings(settings):
     pytest.importorskip("boto3")

@@ -1,4 +1,4 @@
-"""MySQL / MariaDB connector (``mysqldump`` / ``mysql``)."""
+"""MySQL and MariaDB, using ``mysqldump`` and ``mysql``."""
 
 from __future__ import annotations
 
@@ -6,10 +6,9 @@ from .base import BaseConnector
 
 
 class MySQL(BaseConnector):
-    """Dump/restore a MySQL database via ``mysqldump`` and ``mysql``.
+    """Back up with ``mysqldump``, restore with ``mysql``.
 
-    The password is passed out-of-band through ``MYSQL_PWD`` so it never
-    appears in argv.
+    The password goes in ``MYSQL_PWD``, never on the command line.
     """
 
     def _connection_args(self) -> list[str]:
@@ -17,8 +16,8 @@ class MySQL(BaseConnector):
         args: list[str] = []
         host = s.get("HOST")
         if host and str(host).startswith("/"):
-            # Django's convention: a HOST starting with "/" is a Unix socket
-            # path. The port is meaningless for a socket connection.
+            # In Django, a HOST starting with "/" is a Unix socket path.
+            # Sockets have no port.
             args += ["--socket", str(host)]
         else:
             if host:

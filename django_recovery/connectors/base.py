@@ -1,10 +1,8 @@
-"""Base class for per-engine database connectors.
+"""What every database connector provides.
 
-A connector never transforms backup data; it only *constructs* the argv lists
-for the external dump/restore client (``pg_dump``/``psql`` etc.) from a Django
-``DATABASES[alias]`` settings dict, plus any extra environment variables that
-client needs (e.g. ``PGPASSWORD``). The dump/restore streams themselves flow
-through restic's stdin/stdout — connectors only build commands.
+A connector builds the commands for its database's own tools (``pg_dump``,
+``psql``, ...) and the environment variables they need, like ``PGPASSWORD``.
+The data itself flows through restic, never through the connector.
 """
 
 from __future__ import annotations
@@ -13,11 +11,10 @@ from abc import ABC, abstractmethod
 
 
 class BaseConnector(ABC):
-    """Builds dump/restore commands for one database alias.
+    """Backup and restore commands for one database.
 
-    Subclasses implement :meth:`dump_command`, :meth:`restore_command` and
-    :meth:`extra_env` for their engine. The dump is written to restic under
-    :attr:`stdin_filename` and the restore reads that same file on stdin.
+    restic saves the dump under :attr:`stdin_filename`, and the restore
+    command reads that same file back on stdin.
     """
 
     def __init__(self, alias: str, settings_dict: dict):
@@ -26,17 +23,17 @@ class BaseConnector(ABC):
 
     @abstractmethod
     def dump_command(self) -> list[str]:
-        """Argv that writes a SQL dump of this database to stdout."""
+        """Command that writes a backup of the database to stdout."""
 
     @abstractmethod
     def restore_command(self) -> list[str]:
-        """Argv that loads a SQL dump into this database from stdin."""
+        """Command that reads a backup from stdin and loads it into the database."""
 
     @abstractmethod
     def extra_env(self) -> dict[str, str]:
-        """Extra environment variables the dump/restore client needs."""
+        """Environment variables those commands need, such as a password."""
 
     @property
     def stdin_filename(self) -> str:
-        """Logical filename restic records for this database's dump stream."""
+        """The file name the backup gets inside the snapshot."""
         return f"{self.alias}.sql"

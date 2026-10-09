@@ -1,8 +1,7 @@
-"""Per-engine database connectors and the :func:`get_connector` factory.
+"""One connector per database engine, and :func:`get_connector` to pick the right one.
 
-A connector builds the dump/restore command lines for one Django database
-alias, derived from ``settings.DATABASES[alias]``. Command-line construction
-ONLY — connectors never touch the backup data itself.
+A connector knows which commands back up and restore a database, built from
+its ``settings.DATABASES`` entry. It never touches the data itself.
 """
 
 from __future__ import annotations
@@ -16,9 +15,8 @@ from .sqlite import SQLite
 
 __all__ = ["BaseConnector", "MySQL", "Postgres", "SQLite", "get_connector"]
 
-# Map the last dotted segment of a Django ENGINE to a connector class. Both
-# ``django.db.backends.postgresql`` and
-# ``django.contrib.gis.db.backends.postgis`` resolve to Postgres.
+# Keyed by the last part of Django's ENGINE string, so both
+# "django.db.backends.postgresql" and PostGIS map to Postgres.
 _ENGINE_MAP = {
     "postgresql": Postgres,
     "postgis": Postgres,
@@ -28,11 +26,11 @@ _ENGINE_MAP = {
 
 
 def get_connector(alias: str) -> BaseConnector:
-    """Return the connector instance for ``settings.DATABASES[alias]``.
+    """The connector for ``settings.DATABASES[alias]``.
 
-    Raises :class:`ValueError` for an alias missing from ``settings.DATABASES``
-    (e.g. a typo in ``--database``), and :class:`NotImplementedError`
-    (including the engine string) when the database engine has no connector.
+    Raises ``ValueError`` for an alias that isn't in ``DATABASES`` (a typo in
+    ``--database``, say) and ``NotImplementedError`` for an engine we don't
+    support.
     """
     if alias not in settings.DATABASES:
         raise ValueError(

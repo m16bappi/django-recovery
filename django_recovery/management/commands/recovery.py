@@ -1,14 +1,12 @@
-"""``manage.py recovery {init,backup,restore,snapshots,remove,prune}``.
+"""``manage.py recovery init|backup|restore|snapshots|remove|prune``.
 
-A single Django management command exposing every backup operation through
-argparse subparsers. Each subcommand is a thin wrapper over the shared
-:mod:`django_recovery.services` layer; progress strings are written to
-``self.stdout`` via a ``log_callback``. Destructive operations (``restore``,
-``remove``) prompt for confirmation unless ``--noinput`` is given.
+Each subcommand calls the matching function in :mod:`django_recovery.services`
+and prints its progress. ``restore``, ``remove``, and ``prune`` ask before
+deleting anything, unless you pass ``--noinput``.
 
-Expected failures (bad settings, restic or a dump/restore client failing, a
-missing binary) are reported as ``CommandError`` — one clean line and exit
-code 1 instead of a traceback. ``--traceback`` still shows the cause.
+Everyday failures (bad settings, restic failing, a missing ``psql``) print one
+clear line and exit with code 1 instead of a traceback. Add ``--traceback`` to
+see the full error.
 """
 
 from __future__ import annotations
@@ -18,7 +16,7 @@ from django.core.management.base import BaseCommand, CommandError
 
 from django_recovery import services
 
-# ResticError is a RuntimeError; OSError covers a missing restic/psql binary.
+# ResticError is a RuntimeError. OSError covers a missing restic or psql.
 _EXPECTED_ERRORS = (ImproperlyConfigured, ValueError, RuntimeError, OSError)
 
 

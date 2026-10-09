@@ -1,10 +1,9 @@
-"""Thin subprocess wrapper around the restic ``--json`` CLI.
+"""A small wrapper that builds restic commands and runs them.
 
-This module never transforms backup data; it only *constructs* argv lists and
-runs the restic binary. Passwords are never placed in argv or in exception
-text: the configured storage supplies ``RESTIC_PASSWORD`` /
-``RESTIC_PASSWORD_FILE`` and cloud credentials via ``extra_env``, which is
-merged into the subprocess environment only.
+Nothing here touches backup data. It assembles the argument list, runs the
+restic binary, and turns failures into ``ResticError``. Passwords and cloud
+keys travel in the process environment (``extra_env``), never in the argument
+list or an error message, so they can't leak through ``ps`` or a log.
 """
 
 from __future__ import annotations
@@ -18,10 +17,10 @@ from datetime import datetime
 
 
 class ResticError(RuntimeError):
-    """Raised when restic exits with a non-zero return code.
+    """restic exited with a non-zero code.
 
-    Carries the process ``returncode`` and ``stderr``. Its string form never
-    contains the environment or any password material.
+    Keeps the ``returncode`` and restic's ``stderr``. The message never
+    includes the environment, so it is safe to show or log.
     """
 
     def __init__(self, returncode: int, stderr: str):
@@ -29,18 +28,15 @@ class ResticError(RuntimeError):
         self.stderr = stderr or ""
         super().__init__(f"restic exited with code {returncode}: {self.stderr}")
 
-    def __str__(self) -> str:
-        return f"restic exited with code {self.returncode}: {self.stderr}"
-
 
 _FRACTION = re.compile(r"\.(\d+)")
 
 
 def _parse_time(value: str) -> datetime:
-    """Parse restic's RFC 3339 timestamp (nanoseconds, ``Z`` or offset).
+    """Parse a restic timestamp such as ``2026-07-14T10:00:00.123456789+02:00``.
 
-    ``datetime.fromisoformat`` on Python 3.10 accepts only 3 or 6 fractional
-    digits and no ``Z``, so normalise both before parsing.
+    Python 3.10's ``fromisoformat`` can't handle a trailing ``Z`` or more than
+    six fractional digits, so we tidy both up first.
     """
     value = value.replace("Z", "+00:00")
     value = _FRACTION.sub(lambda m: "." + m.group(1)[:6].ljust(6, "0"), value, count=1)
@@ -49,7 +45,7 @@ def _parse_time(value: str) -> datetime:
 
 @dataclass
 class Snapshot:
-    """A single restic snapshot as reported by ``restic --json snapshots``."""
+    """One snapshot, as listed by ``restic snapshots --json``."""
 
     id: str
     short_id: str
@@ -60,11 +56,7 @@ class Snapshot:
 
     @classmethod
     def from_json(cls, d: dict) -> Snapshot:
-        """Build a :class:`Snapshot` from a restic snapshot JSON object.
-
-        Missing ``tags``/``paths`` default to ``[]`` (restic omits empty
-        lists) and ``short_id``/``hostname`` tolerate absence.
-        """
+        # restic leaves out empty lists, so missing tags/paths become [].
         return cls(
             id=d.get("id", ""),
             short_id=d.get("short_id", ""),
@@ -76,12 +68,12 @@ class Snapshot:
 
     @property
     def timestamp(self) -> datetime:
-        """``time`` as a timezone-aware datetime, for correct ordering."""
+        """``time`` as a real datetime, so snapshots from different timezones sort correctly."""
         return _parse_time(self.time)
 
 
 class Restic:
-    """Constructs and runs restic CLI commands against one repository."""
+    """Runs restic commands against one repository."""
 
     def __init__(
         self,
@@ -95,23 +87,15 @@ class Restic:
         self.extra_env = dict(extra_env or {})
         self.binary = binary
         self.global_args = list(global_args or [])
-        # Seconds before a restic call is killed; None/0 waits forever.
+        # Seconds before a restic call is stopped. None or 0 means wait forever.
         self.timeout = timeout or None
-
-    # -- internals ---------------------------------------------------------
 
     def _base_argv(self) -> list[str]:
         return [self.binary, "--json", "-r", self.repository, *self.global_args]
 
     def _env(self) -> dict[str, str]:
-        """Build the subprocess environment.
-
-        ``os.environ`` is copied and then overlaid with ``extra_env`` from the
-        configured storage (``RESTIC_PASSWORD``/``RESTIC_PASSWORD_FILE`` plus
-        cloud credentials). The overlay wins over inherited shell variables so
-        behaviour is deterministic regardless of the caller's environment.
-        Values in ``extra_env`` never appear in argv or exception text.
-        """
+        # Our values win over whatever the shell happened to export, so a stale
+        # RESTIC_PASSWORD in someone's terminal can't change the result.
         env = os.environ.copy()
         env.update(self.extra_env)
         return env
@@ -133,8 +117,8 @@ class Restic:
                 timeout=self.timeout,
             )
         except subprocess.TimeoutExpired as exc:
-            # subprocess.run has already killed restic. A killed run can leave
-            # a stale lock; `restic unlock` clears it.
+            # subprocess.run has already killed restic. That can leave a stale
+            # lock behind, which `restic unlock` clears.
             raise ResticError(
                 -1, f"timed out after {self.timeout}s (TUNING['timeout'])"
             ) from exc
@@ -142,18 +126,15 @@ class Restic:
             raise ResticError(proc.returncode, proc.stderr)
         return proc
 
-    # -- commands ----------------------------------------------------------
-
     def init(self) -> subprocess.CompletedProcess:
         return self._run(self._base_argv() + ["init"])
 
     def is_initialized(self) -> bool:
-        """Whether the repository already exists.
+        """Whether the repository exists and can be opened.
 
-        Uses ``cat config`` — the canonical restic existence probe. Any
-        failure (missing repo, unreachable backend, wrong password) reports
-        ``False``; a subsequent ``init`` will surface the real error if the
-        repository does exist but cannot be opened.
+        Any failure counts as "no": missing repository, unreachable storage, or
+        a wrong password. If the repository does exist, the following ``init``
+        fails with restic's real error message.
         """
         try:
             self._run(self._base_argv() + ["cat", "config"])
@@ -189,14 +170,12 @@ class Restic:
         skip_if_unchanged: bool = False,
         read_concurrency: int | None = None,
     ) -> subprocess.CompletedProcess:
-        """Back up the stdout of ``cmd`` as a file named ``stdin_filename``.
+        """Run ``cmd`` and save what it prints as a file named ``stdin_filename``.
 
-        Uses ``restic backup --stdin-from-command`` so a failed dump never
-        produces a snapshot. The dump runs inside restic's own process, so any
-        credentials the dump needs (e.g. ``PGPASSWORD``) must be present in
-        restic's environment: pass them via ``extra_env`` and they are merged
-        into the subprocess environment for this call only. ``extra_env`` never
-        appears in ``argv``.
+        restic runs the command itself (``--stdin-from-command``), so if the
+        dump fails, no snapshot is created. Because the dump runs inside
+        restic's process, anything it needs, such as ``PGPASSWORD``, goes in
+        ``extra_env`` for this call.
         """
         argv = self._base_argv() + ["backup", "--stdin-filename", stdin_filename]
         argv += self._backup_flags(tags, host, skip_if_unchanged, read_concurrency)
@@ -223,7 +202,10 @@ class Restic:
         tags: list[str] | None = None,
         snapshot_ids: list[str] | None = None,
     ) -> list[Snapshot]:
-        """List snapshots, optionally filtered by tags and/or id (prefixes)."""
+        """List snapshots, optionally only those with ``tags`` or matching ``snapshot_ids``.
+
+        Like restic itself, ids may be shortened to a prefix.
+        """
         argv = self._base_argv() + ["snapshots"]
         for tag in tags or []:
             argv += ["--tag", tag]
@@ -242,7 +224,7 @@ class Restic:
             argv += ["--prune"]
         return self._run(argv)
 
-    # Deterministic --keep-* flag order for forget_policy.
+    # RETENTION key -> restic flag, in a fixed order so the command is predictable.
     _POLICY_FLAGS = (
         ("last", "--keep-last"),
         ("hourly", "--keep-hourly"),
@@ -260,12 +242,12 @@ class Restic:
         group_by: str = "paths,tags",
         dry_run: bool = False,
     ) -> subprocess.CompletedProcess:
-        """Apply a retention policy: ``forget --keep-* ... [--prune]``.
+        """Delete snapshots outside the ``retention`` policy.
 
-        ``group_by`` defaults to ``paths,tags`` (not restic's ``host,paths``)
-        so each backup series — ``db:<alias>`` vs ``media`` — is retained
-        independently, and changing container hostnames cannot fragment the
-        groups.
+        We group by ``paths,tags`` instead of restic's default ``host,paths``.
+        That keeps each database and the media files on their own count, and a
+        container that gets a new hostname on every deploy doesn't start a new
+        group each time.
         """
         argv = self._base_argv() + ["forget", "--group-by", group_by]
         for key, flag in self._POLICY_FLAGS:
@@ -279,12 +261,11 @@ class Restic:
         return self._run(argv)
 
     def dump_popen(self, snapshot_id: str, path: str) -> subprocess.Popen:
-        """Stream the raw content of ``path`` from a snapshot to stdout.
+        """Start streaming ``path`` from a snapshot to stdout.
 
-        ``restic dump`` writes raw file bytes to stdout, so ``--json`` is
-        deliberately omitted here (it would corrupt the stream). The caller
-        pipes ``proc.stdout`` into a restore command and is responsible for
-        waiting on the process; we do not wait.
+        No ``--json`` here: ``restic dump`` writes the raw file bytes, and JSON
+        output would corrupt them. The caller reads ``proc.stdout`` and must
+        wait for the process to finish.
         """
         argv = [self.binary, "-r", self.repository, *self.global_args,
                 "dump", snapshot_id, path]
@@ -298,6 +279,9 @@ class Restic:
         return proc.stdout.strip()
 
     def version_info(self) -> tuple[int, int, int] | None:
-        """``(major, minor, patch)`` from ``restic version``, or None if unparsable."""
+        """restic's version as ``(major, minor, patch)``, or None if we can't tell."""
         match = re.search(r"restic (\d+)\.(\d+)\.(\d+)", self.version())
-        return tuple(int(part) for part in match.groups()) if match else None
+        if match is None:
+            return None
+        major, minor, patch = (int(part) for part in match.groups())
+        return major, minor, patch

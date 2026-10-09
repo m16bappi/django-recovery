@@ -1,9 +1,8 @@
-"""Service layer orchestrating restic + connectors.
+"""The actual backup operations, shared by the management command and your own code.
 
-These functions are the single shared entry point for the management
-commands. Each accepts an optional ``log_callback`` used to report short,
-human-readable progress strings (commands print). No password material is
-ever passed to the callback.
+Each function takes an optional ``log_callback`` that receives short progress
+messages (the command prints them). Passwords never reach the callback.
+Call these directly from Celery tasks or anywhere else you schedule work.
 """
 
 from __future__ import annotations
@@ -18,22 +17,20 @@ from .restic import Restic, Snapshot
 
 LogCallback = Callable[[str], None]
 
-# --stdin-from-command, which every database backup relies on.
+# 0.16 added --stdin-from-command, which every database backup relies on.
 MIN_RESTIC_VERSION = (0, 16, 0)
 
 
 def _noop(_message: str) -> None:
-    """Default log sink: discard the message."""
+    pass
 
 
 def _make_restic(config: RecoveryConfig | None = None) -> Restic:
-    """Build a :class:`Restic` from a (possibly default) config."""
     config = config or get_config()
-    binary = resolve_binary(config)
     return Restic(
         config.repository.url,
         extra_env=config.restic_env(),
-        binary=binary,
+        binary=resolve_binary(config),
         global_args=build_global_args(config),
         timeout=config.tuning.get("timeout"),
     )
@@ -41,16 +38,13 @@ def _make_restic(config: RecoveryConfig | None = None) -> Restic:
 
 def run_init(
     config: RecoveryConfig | None = None,
-    log_callback: LogCallback | None = None,
+    log_callback: LogCallback = _noop,
 ) -> None:
-    """Initialize the restic repository.
+    """Create the restic repository, or do nothing if it already exists.
 
-    Idempotent: when the repository already exists the call logs and
-    returns instead of failing (``restic init`` errors on an existing
-    repository). Also checks the restic version once, so a too-old binary
-    is reported here rather than as a cryptic failure on the first backup.
+    Also checks the restic version, so an old binary is reported now rather
+    than as a confusing failure on the first backup.
     """
-    log = log_callback or _noop
     restic = _make_restic(config)
     version = restic.version_info()
     if version is not None and version < MIN_RESTIC_VERSION:
@@ -59,54 +53,49 @@ def run_init(
             f"needs {'.'.join(map(str, MIN_RESTIC_VERSION))} or newer."
         )
     if restic.is_initialized():
-        log("Repository already initialized; skipping.")
-        return None
-    log("Initializing repository...")
+        log_callback("Repository already initialized; skipping.")
+        return
+    log_callback("Initializing repository...")
     restic.init()
-    log("Repository initialized.")
-    return None
+    log_callback("Repository initialized.")
 
 
 def run_backup(
     databases: list[str] | None = None,
     config: RecoveryConfig | None = None,
-    log_callback: LogCallback | None = None,
+    log_callback: LogCallback = _noop,
 ) -> dict[str, str]:
-    """Back up each configured database (and media, when enabled).
+    """Back up each database, plus media files if ``MEDIA`` is on.
 
-    Each database is streamed through ``restic backup --stdin-from-command``
-    with the connector's dump command; the connector's ``extra_env`` (e.g.
-    ``PGPASSWORD``) is merged into restic's environment so the dump can
-    authenticate. Returns a summary dict mapping each target to ``"ok"``.
+    restic runs each database's dump command and saves its output. The
+    connector's credentials (``PGPASSWORD`` and friends) are handed to restic
+    so the dump can log in. Returns ``{"default": "ok", ...}``.
     """
-    log = log_callback or _noop
     config = config or get_config()
     restic = _make_restic(config)
     databases = databases if databases is not None else config.databases
-
     read_concurrency = config.tuning.get("read_concurrency")
 
     summary: dict[str, str] = {}
     for alias in databases:
-        log(f"Backing up database '{alias}'...")
+        log_callback(f"Backing up database '{alias}'...")
         conn = get_connector(alias)
-        tags = [f"db:{alias}", *config.tags]
         restic.backup_command(
             conn.dump_command(),
             stdin_filename=conn.stdin_filename,
-            tags=tags,
+            tags=[f"db:{alias}", *config.tags],
             extra_env=conn.extra_env(),
             host=config.host,
             skip_if_unchanged=config.skip_if_unchanged,
             read_concurrency=read_concurrency,
         )
         summary[alias] = "ok"
-        log(f"Database '{alias}' backed up.")
+        log_callback(f"Database '{alias}' backed up.")
 
     if config.media:
         from django.conf import settings
 
-        log("Backing up media...")
+        log_callback("Backing up media...")
         restic.backup_paths(
             [settings.MEDIA_ROOT],
             tags=["media", *config.tags],
@@ -116,7 +105,7 @@ def run_backup(
             exclude=config.media_exclude,
         )
         summary["media"] = "ok"
-        log("Media backed up.")
+        log_callback("Media backed up.")
 
     return summary
 
@@ -125,25 +114,24 @@ def run_restore(
     alias: str,
     snapshot_id: str,
     config: RecoveryConfig | None = None,
-    log_callback: LogCallback | None = None,
+    log_callback: LogCallback = _noop,
 ) -> None:
-    """Restore database ``alias`` from ``snapshot_id``.
+    """Replace database ``alias`` with the contents of ``snapshot_id``.
 
-    Guards against restoring into the wrong database: the resolved snapshot's
-    tags must contain ``db:<alias>``. ``snapshot_id`` may be ``"latest"``, in
-    which case the newest snapshot tagged for ``alias`` is chosen and its real
-    id is used for the dump. The dump is streamed straight into the
-    connector's restore command; both processes must exit zero.
+    ``snapshot_id`` can be a full id, a prefix, or ``"latest"`` (the newest
+    backup of this database). The snapshot must be labelled ``db:<alias>``, so
+    you can't load one database's backup into another by mistake. restic
+    streams the backup straight into the restore client, and both must
+    succeed.
     """
-    log = log_callback or _noop
     config = config or get_config()
     restic = _make_restic(config)
     db_tag = f"db:{alias}"
 
-    log(f"Resolving snapshot '{snapshot_id}' for database '{alias}'...")
-    # Ask restic for only the candidates. An explicit id is looked up without
-    # a tag filter so a backup of another database still hits the tag guard
-    # below (a clear error) instead of "not found".
+    log_callback(f"Resolving snapshot '{snapshot_id}' for database '{alias}'...")
+    # Only fetch the snapshots we might use. An explicit id is looked up
+    # without the tag filter on purpose: if it belongs to another database,
+    # the user gets "not a backup of database X" instead of "not found".
     if snapshot_id == "latest":
         snapshots = restic.snapshots(tags=[db_tag])
     else:
@@ -159,7 +147,7 @@ def run_restore(
         )
 
     conn = get_connector(alias)
-    log(f"Restoring database '{alias}' from snapshot {snapshot.short_id}...")
+    log_callback(f"Restoring database '{alias}' from snapshot {snapshot.short_id}...")
     proc = restic.dump_popen(snapshot.id, conn.stdin_filename)
     try:
         result = subprocess.run(
@@ -182,8 +170,7 @@ def run_restore(
             f"restore of database '{alias}' failed "
             f"(exit code {result.returncode})"
         )
-    log(f"Database '{alias}' restored.")
-    return None
+    log_callback(f"Database '{alias}' restored.")
 
 
 def _resolve_snapshot(
@@ -191,17 +178,9 @@ def _resolve_snapshot(
     snapshot_id: str,
     db_tag: str,
 ) -> Snapshot | None:
-    """Find the snapshot matching ``snapshot_id``.
-
-    ``"latest"`` selects the newest snapshot carrying ``db_tag`` (by parsed
-    time, so mixed timezone offsets order correctly); otherwise match by id
-    prefix, as restic does.
-    """
     if snapshot_id == "latest":
         candidates = [s for s in snapshots if db_tag in s.tags]
-        if not candidates:
-            return None
-        return max(candidates, key=lambda s: s.timestamp)
+        return max(candidates, key=lambda s: s.timestamp) if candidates else None
     for s in snapshots:
         if s.id.startswith(snapshot_id) or snapshot_id == s.short_id:
             return s
@@ -211,29 +190,25 @@ def _resolve_snapshot(
 def remove_snapshot(
     snapshot_id: str,
     config: RecoveryConfig | None = None,
-    log_callback: LogCallback | None = None,
+    log_callback: LogCallback = _noop,
 ) -> None:
-    """Forget ``snapshot_id`` and prune its now-unreferenced data."""
-    log = log_callback or _noop
+    """Delete one snapshot and free the space only it was using."""
     restic = _make_restic(config)
-    log(f"Removing snapshot {snapshot_id}...")
+    log_callback(f"Removing snapshot {snapshot_id}...")
     restic.forget_snapshot(snapshot_id, prune=True)
-    log(f"Snapshot {snapshot_id} removed.")
-    return None
+    log_callback(f"Snapshot {snapshot_id} removed.")
 
 
 def run_prune(
     config: RecoveryConfig | None = None,
     dry_run: bool = False,
-    log_callback: LogCallback | None = None,
+    log_callback: LogCallback = _noop,
 ) -> None:
-    """Apply ``RECOVERY['RETENTION']`` with ``forget --keep-* --prune``.
+    """Delete snapshots that fall outside ``RECOVERY['RETENTION']``.
 
-    Raises:
-        ValueError: when no retention policy is configured — pruning without
-            a policy would be a no-op at best and surprising at worst.
+    Raises ``ValueError`` if no policy is set: without one, there is nothing
+    sensible to keep or delete.
     """
-    log = log_callback or _noop
     config = config or get_config()
     if not config.retention:
         raise ValueError(
@@ -243,18 +218,16 @@ def run_prune(
     restic = _make_restic(config)
     policy = ", ".join(f"{k}={v}" for k, v in sorted(config.retention.items()))
     verb = "Previewing" if dry_run else "Applying"
-    log(f"{verb} retention policy ({policy})...")
+    log_callback(f"{verb} retention policy ({policy})...")
     restic.forget_policy(config.retention, prune=not dry_run, dry_run=dry_run)
-    log("Retention preview complete." if dry_run else "Retention policy applied.")
-    return None
+    log_callback("Retention preview complete." if dry_run else "Retention policy applied.")
 
 
 def list_snapshots(
     config: RecoveryConfig | None = None,
-    log_callback: LogCallback | None = None,
+    log_callback: LogCallback = _noop,
 ) -> list[Snapshot]:
-    """Return all snapshots in the repository."""
-    log = log_callback or _noop
+    """Every snapshot in the repository."""
     restic = _make_restic(config)
-    log("Listing snapshots...")
+    log_callback("Listing snapshots...")
     return restic.snapshots()

@@ -68,8 +68,6 @@ def restore(restic, connector, monkeypatch):
     return client
 
 
-# --- backup ---------------------------------------------------------------------
-
 @pytest.mark.usefixtures("connector")
 def test_backup_streams_each_database_through_restic(restic):
     logs = []
@@ -115,8 +113,6 @@ def test_backup_includes_media_when_enabled(restic, settings):
     )
     assert summary == {"default": "ok", "media": "ok"}
 
-
-# --- restore --------------------------------------------------------------------------
 
 def test_restore_by_id_pipes_dump_into_restore_client(restic, restore):
     restic.snapshots.return_value = [make_snapshot("abc123def456")]
@@ -189,8 +185,6 @@ def test_restore_reports_failing_process(restic, restore, dump_rc, restore_rc, m
         services.run_restore("default", "abc123", config=_config())
 
 
-# --- prune / remove / list ---------------------------------------------------------------
-
 @pytest.mark.parametrize("dry_run", [False, True])
 def test_prune_applies_retention_policy(restic, dry_run):
     services.run_prune(config=_config(retention={"daily": 7}), dry_run=dry_run)
@@ -214,8 +208,6 @@ def test_list_snapshots_returns_restic_snapshots(restic):
     restic.snapshots.return_value = [make_snapshot()]
     assert services.list_snapshots(config=_config()) is restic.snapshots.return_value
 
-
-# --- init -----------------------------------------------------------------------------------
 
 @pytest.mark.parametrize("version, initialized, calls_init, log", [
     ((0, 19, 1), False, True, "Repository initialized."),

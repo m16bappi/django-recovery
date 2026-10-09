@@ -53,8 +53,6 @@ def restic():
     return Restic(repository="/repo", binary="restic")
 
 
-# --- argv ---------------------------------------------------------------------
-
 @pytest.mark.parametrize("call, expected", [
     pytest.param(lambda r: r.init(), ["init"], id="init"),
     pytest.param(lambda r: r.unlock(), ["unlock"], id="unlock"),
@@ -134,8 +132,6 @@ def test_dump_popen_streams_raw_bytes_without_json(monkeypatch):
     assert "env" in kwargs
 
 
-# --- results --------------------------------------------------------------------
-
 @pytest.mark.parametrize("returncode, expected", [(0, True), (1, False)])
 def test_is_initialized(run, restic, returncode, expected):
     run.returncode = returncode
@@ -184,8 +180,6 @@ def test_parse_time_accepts_restic_formats(value):
     assert restic_mod._parse_time(value).tzinfo is not None
 
 
-# --- errors and timeouts -----------------------------------------------------------
-
 def test_nonzero_exit_raises_restic_error(run, restic):
     run.returncode, run.stderr = 1, "Fatal: unable to open repository"
     with pytest.raises(ResticError) as info:
@@ -208,8 +202,6 @@ def test_timeout_expired_raises_restic_error(monkeypatch):
     with pytest.raises(ResticError, match="timed out after 5s"):
         Restic(repository="/repo", binary="restic", timeout=5).unlock()
 
-
-# --- secrets ---------------------------------------------------------------------------
 
 def test_env_overlay_wins_over_inherited_environ(run, monkeypatch):
     monkeypatch.setenv("RESTIC_PASSWORD", "stale-shell-value")
