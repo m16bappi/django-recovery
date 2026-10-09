@@ -23,15 +23,15 @@ RECOVERY = {
 | `MEDIA` | `False` | Also back up the `MEDIA_ROOT` folder. |
 | `MEDIA_EXCLUDE` | `[]` | Media files to skip, e.g. `["cache/*", "*.tmp"]`. |
 | `TAGS` | `[]` | Extra labels added to every backup. |
-| `RETENTION` | `{}` | How many old backups to keep — see below. |
+| `RETENTION` | `{}` | How many old backups to keep (see below). |
 | `HOST` | — | Fixed host name for backups. **Set it in Docker/Kubernetes.** |
 | `SKIP_IF_UNCHANGED` | `False` | Don't save a new backup if nothing changed (restic 0.17+). |
 | `BINARY` | — | Path to `restic`, if it is not on `PATH`. |
-| `TUNING` | `{}` | Speed options — see below. |
+| `TUNING` | `{}` | Speed options (see below). |
 | `EXTRA_ARGS` | `[]` | Extra arguments passed to every restic command. |
 
-Typos and unknown options stop every `recovery` command with an `ImproperlyConfigured`
-error, so mistakes show up before any backup runs.
+If you misspell an option, every `recovery` command stops with an `ImproperlyConfigured`
+error. Better to find out now than when a backup quietly does the wrong thing.
 
 ## Password
 
@@ -45,7 +45,7 @@ Pick one:
 Or set neither, and restic reads `RESTIC_PASSWORD` from the environment itself.
 
 !!! danger
-    Lost password = lost backups. There is no reset.
+    If you lose the password, the backups are gone for good. There's no reset.
 
 ## Keeping old backups
 
@@ -65,7 +65,8 @@ separately, so one never pushes out another.
 
 ## Speed
 
-All optional. They map directly to restic options:
+You can skip this section. The defaults are fine for most projects, but if backups are
+slow or use too much bandwidth, these map straight to restic's own options:
 
 ```python
 "TUNING": {

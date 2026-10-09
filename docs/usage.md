@@ -19,12 +19,13 @@ Everything is one command: `python manage.py recovery <action>`.
 `restore`, `remove`, and `prune` ask you to confirm first. Add `--noinput` to skip the
 question in scripts.
 
-Restore also checks that the backup belongs to the database you named, so you cannot
+Restore also checks that the backup belongs to the database you named, so you can't
 load the `analytics` backup into `default` by mistake.
 
 ## Run backups on a schedule
 
-django-recovery does not run by itself. Use cron or Celery.
+django-recovery doesn't schedule anything itself. Use whatever you already have, like
+cron or Celery.
 
 **cron:**
 
@@ -69,17 +70,22 @@ Whichever you use, the process needs `restic` and your database tools on its `PA
 | MySQL / MariaDB | `mysqldump`, `mysql` |
 | SQLite | nothing |
 
-Host, port, user, and password come from `settings.DATABASES`. You do not repeat them.
+Host, port, user, and password come from `settings.DATABASES`, so you don't repeat them
+anywhere.
 
 ## How it works
 
-- **Backup:** restic runs the dump command (for example `pg_dump`) and saves its output.
-  If the dump fails, restic saves nothing.
-- **Restore:** restic streams the backup straight into `psql` / `mysql`.
-- Every backup is labelled `db:<name>` (or `media`). Labels are how `latest` and the
-  restore check find the right backup.
-- Dumps are not compressed first — restic compresses them after splitting them into
-  chunks, so it can still skip the parts that did not change.
+When you back up, restic runs the dump command itself (for example `pg_dump`) and saves
+what it prints. If the dump fails, restic saves nothing, so you never end up with a
+half-written backup. Restoring works the other way around: restic streams the backup
+straight into `psql` or `mysql`.
+
+Every backup gets a label, `db:<name>` or `media`. That's how `latest` finds the newest
+backup for a database, and how restore knows it has the right one.
+
+The dumps aren't compressed before restic sees them. restic splits them into chunks
+first and compresses after that, which is what lets it skip the parts that didn't
+change since the last backup.
 
 ## FAQ
 
@@ -89,17 +95,17 @@ Only for cloud or SFTP storage. A local folder uses Django's own `FileSystemStor
 **Can I use one repository per database?**
 No. All databases and media go into one repository, separated by labels.
 
-**"repository is locked" — what now?**
-A stopped backup can leave a lock. Remove it with restic, using the same repository
-and password: `restic -r <repository> unlock` (for a local folder, the repository is
-the folder path).
+**What do I do about "repository is locked"?**
+A backup that got killed halfway can leave a lock behind. Remove it with restic, using
+the same repository and password: `restic -r <repository> unlock`. For a local folder,
+the repository is just the folder path.
 
-**I lost the password.**
-The backups cannot be opened. There is no reset.
+**I lost the password. Can I get my backups back?**
+No. Without the password the backups can't be opened, and there's no reset.
 
 **Is this point-in-time recovery?**
 No. A backup is the database at the moment it ran. Back up more often (deduplication
 keeps it cheap) or use a WAL tool like pgBackRest for true point-in-time recovery.
 
-**Why must restic be installed separately?**
-It is a normal system program, like `pg_dump`. You update it on its own.
+**Why do I have to install restic separately?**
+It's a normal system program, like `pg_dump`, so you can update it on its own schedule.

@@ -1,20 +1,20 @@
 # Storage
 
-Backups go to one of your Django `STORAGES`. Give it a name, then put that name in
-`RECOVERY["STORAGE"]`:
+Backups go to one of the storages in your Django `STORAGES` setting. Pick one (or add a
+new one) and put its name in `RECOVERY["STORAGE"]`:
 
 ```python
 RECOVERY = {"STORAGE": "backups", "PASSWORD": os.environ["RESTIC_PASSWORD"]}
 ```
 
-django-recovery reads the bucket, folder, and credentials from that storage. You do not
-write them twice. For cloud storage, install and set up
-[django-storages](https://django-storages.readthedocs.io/) as you normally would.
+django-recovery reads the bucket, folder, and credentials from that storage, so you
+don't have to write them twice. For cloud storage, install and set up
+[django-storages](https://django-storages.readthedocs.io/) the way you normally would.
 
 !!! warning "Use a separate storage for backups"
-    If backups share the media bucket and its keys, anyone who gets those keys can
-    delete your backups too. Use a separate bucket if you can. At least use a separate
-    folder (`location`) — see the S3 example below.
+    If backups share the media bucket and its keys, anyone who gets hold of those keys
+    can delete your backups too. A separate bucket is best. If that's not an option, at
+    least give backups their own folder with `location`, like in the S3 example below.
 
 ## Local folder
 
@@ -52,8 +52,8 @@ the server's IAM role. `session_profile` (an AWS profile name) also works.
 }
 ```
 
-On Google Cloud (GCE, GKE, Cloud Run) it uses the attached service account — nothing
-else to do. Elsewhere, set the `GOOGLE_APPLICATION_CREDENTIALS` environment variable to
+On Google Cloud (GCE, GKE, Cloud Run) it uses the attached service account, so there's
+nothing else to set up. Elsewhere, set the `GOOGLE_APPLICATION_CREDENTIALS` environment variable to
 your key file. (A `GS_CREDENTIALS` object alone is not enough for restic.)
 
 ## Azure Blob Storage
